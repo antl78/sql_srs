@@ -1,36 +1,79 @@
+# pylint: disable=missing-module-docstring
+import io
+
+import duckdb
 import pandas as pd
 import streamlit as st
-import duckdb
 
-st.write("Hello World")
-data = {"a": [1, 2, 3], "b": [4, 5, 6]}
-df = pd.DataFrame(data)
+CSV = """
+beverage,price
+orange juice,2.5
+Expresso,2
+Tea,3
+"""
 
-# Connexion DuckDB en mémoire et enregistrement du DataFrame
-con = duckdb.connect()
-con.register("df", df)
+beverages = pd.read_csv(io.StringIO(CSV))
 
-tab1, tab2, tab3 = st.tabs(["Cat", "Dog", "Owl"])
+CSV2 = """
+food_item,food_price
+cookie juice,2.5
+chocolatine,2
+muffin,3
+"""
 
-with tab1:
-    st.subheader("Requête SQL sur le DataFrame")
-    st.caption("Table disponible : `df` — colonnes : `a`, `b`")
+food_items = pd.read_csv(io.StringIO(CSV2))
 
-    sql_query = st.text_input("Entrez votre requête SQL", value="SELECT * FROM df")
-    st.write(f"Vous avez entré la query suivante : {sql_query}")
+ANSWER_STR = """
+SELECT * FROM beverages
+CROSS JOIN food_items
+"""
 
-    if sql_query:
-        try:
-            result = con.execute(sql_query).df()
-            st.success(f"{len(result)} ligne(s) retournée(s)")
-            st.dataframe(result)
-        except Exception as e:
-            st.error(f"Erreur SQL : {e}")
+solution_df = duckdb.sql(ANSWER_STR).df()
+
+
+with st.sidebar:
+    option = st.selectbox(
+        "What would you like to review?",
+        ("Joins", "GroupBy", "Windows Functions"),
+        index=None,
+        placeholder="Select a theme...",
+    )
+    st.write("You selected:", option)
+
+
+st.header("Enter your code:")
+query = st.text_area(label="Votre code SQL ici", key="user_input")
+if query:
+    result = duckdb.sql(query).df()
+    st.dataframe(result)
+
+    if len(result.columns) != len(
+        solution_df.columns
+    ):  # replace with try result = result[solution_df.columns]
+        st.write("Some columns are missing")
+
+    try:
+        result = result[solution_df.columns]
+        st.dataframe(result.compare(solution_df))
+    except KeyError as e:
+        st.write("Some columns are missing")
+
+    n_lines_difference = result.shape[0] - solution_df.shape[0]
+    if n_lines_difference != 0:
+        st.write(
+            f"result has a difference of {n_lines_difference} lines with the solution"
+        )
+
+
+tab2, tab3 = st.tabs(["Tables", "Solution"])
 
 with tab2:
-    st.header("A dog")
-    st.image("https://static.streamlit.io/examples/dog.jpg", width=200)
+    st.write("table: beverages")
+    st.dataframe(beverages)
+    st.write("table: food_items")
+    st.dataframe(food_items)
+    st.write("expected:")
+    st.dataframe(solution_df)
 
 with tab3:
-    st.header("An owl")
-    st.image("https://static.streamlit.io/examples/owl.jpg", width=200)
+    st.write(ANSWER_STR)
