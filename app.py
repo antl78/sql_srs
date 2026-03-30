@@ -1,60 +1,36 @@
 import pandas as pd
 import streamlit as st
 import duckdb
-import io
 
-csv = '''
-beverage,price
-orange juice,2.5
-Expresso,2
-Tea,3
-'''
+st.write("Hello World")
+data = {"a": [1, 2, 3], "b": [4, 5, 6]}
+df = pd.DataFrame(data)
 
-beverages = pd.read_csv(io.StringIO(csv))
+# Connexion DuckDB en mémoire et enregistrement du DataFrame
+con = duckdb.connect()
+con.register("df", df)
 
-csv2 = '''
-food_item,food_price
-cookie juice,2.5
-chocolatine,2
-muffin,3
-'''
+tab1, tab2, tab3 = st.tabs(["Cat", "Dog", "Owl"])
 
-food_items = pd.read_csv(io.StringIO(csv2))
+with tab1:
+    st.subheader("Requête SQL sur le DataFrame")
+    st.caption("Table disponible : `df` — colonnes : `a`, `b`")
 
-answer = """
-SELECT * FROM beverages
-CROSS JOIN food_items
-"""
+    sql_query = st.text_input("Entrez votre requête SQL", value="SELECT * FROM df")
+    st.write(f"Vous avez entré la query suivante : {sql_query}")
 
-solution = duckdb.sql(answer).df()
-
-
-with st.sidebar:
-    option = st.selectbox(
-        "What would you like to review?",
-        ("Joins", "GroupBy", "Windows Functions"),
-        index=None,
-        placeholder="Select a theme...",
-    )
-    st.write('You selected:', option)
-
-
-
-st.header("Enter your code:")
-query = st.text_area(label="Votre code SQL ici", key="user_input")
-if query:
-    result = duckdb.sql(query).df()
-    st.dataframe(result)
-
-tab2, tab3 = st.tabs(["Tables", "Solution"])
+    if sql_query:
+        try:
+            result = con.execute(sql_query).df()
+            st.success(f"{len(result)} ligne(s) retournée(s)")
+            st.dataframe(result)
+        except Exception as e:
+            st.error(f"Erreur SQL : {e}")
 
 with tab2:
-    st.write("table: beverages")
-    st.dataframe(beverages)
-    st.write("table: food_items")
-    st.dataframe(food_items)
-    st.write("expected:")
-    st.dataframe(solution)
+    st.header("A dog")
+    st.image("https://static.streamlit.io/examples/dog.jpg", width=200)
 
 with tab3:
-    st.write(answer)
+    st.header("An owl")
+    st.image("https://static.streamlit.io/examples/owl.jpg", width=200)
