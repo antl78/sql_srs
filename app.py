@@ -2,6 +2,8 @@
 
 import os
 import logging
+from datetime import date, timedelta
+
 import duckdb
 import streamlit as st
 
@@ -16,6 +18,24 @@ if "exercises_sql_tables.duckdb" not in os.listdir("data"):
     # subprocess.run(["python", "init_db.py"]) # ne marche pas avec Streamlit
 
 con = duckdb.connect(database="data/exercises_sql_tables.duckdb", read_only=False)
+
+
+def check_users_solution() -> None:
+    """
+    Vérifie si l'utilisateur a entré une bonne requête SQL.
+    1 : vérifie les colonnes
+    2 : vérifie les valeurs
+    """
+    global result, e
+    if query:
+        try:
+            result = con.execute(query).df()
+            st.dataframe(result)
+        except Exception as e:
+            st.error(f"Erreur SQL : {e}")
+    else:
+        st.warning("Veuillez entrer une requête SQL.")
+
 
 with st.sidebar:
     available_themes_df = con.execute("SELECT DISTINCT theme FROM memory_state").df()
@@ -45,14 +65,17 @@ else:
     query = st.text_area(label="Votre code SQL ici", key="user_input")
 
     if st.button("Valider"):
-        if query:
-            try:
-                result = con.execute(query).df()
-                st.dataframe(result)
-            except Exception as e:
-                st.error(f"Erreur SQL : {e}")
-        else:
-            st.warning("Veuillez entrer une requête SQL.")
+        check_users_solution()
+
+    for n_days in [2, 7, 21]:
+        if st.button(f"Revoir dans {n_days} jours"):
+            next_review = date.today() + timedelta(days=n_days)
+            con.execute(f"UPDATE memory_state SET last_reviewed = '{next_review}' WHERE exercise_name = '{exercise_name}'")
+            st.rerun()
+
+    if st.button("Reset"):
+        con.execute(f"UPDATE memory_state SET last_reviewed = '1970-01-01'")
+        st.rerun()
 
     tab2, tab3 = st.tabs(["Tables", "Solution"])
 
