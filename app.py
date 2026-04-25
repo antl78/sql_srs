@@ -20,12 +20,12 @@ con = duckdb.connect(database="data/exercises_sql_tables.duckdb", read_only=Fals
 
 with st.sidebar:
     theme = st.selectbox(
-        "What would you like to review?",
+        "Que voulez-vous revoir ?",
         ("cross_joins", "GroupBy", "window_functions"),
         index=None,
-        placeholder="Select a theme...",
+        placeholder="Sélectionnez un thème...",
     )
-    st.write("You selected:", theme)
+    st.write("Vous avez sélectionné :", theme)
 
     if theme:
         exercise = con.execute(f"SELECT * FROM memory_state WHERE theme = '{theme}'").df().sort_values("last_reviewed").reset_index()
@@ -37,10 +37,10 @@ with st.sidebar:
 
         solution_df = con.execute(answer).df()
 
-st.header("Enter your code:")
+st.header("Entrez votre code SQL :")
 
 if not theme:
-    st.info("Select a theme from the left sidebar")
+    st.info("Sélectionnez un thème dans la barre à gauche")
 else:
     query = st.text_area(label="Votre code SQL ici", key="user_input")
 
