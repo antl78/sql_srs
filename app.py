@@ -1,5 +1,5 @@
 # pylint: disable=missing-module-docstring
-import io
+
 import os
 import logging
 import duckdb
