@@ -3,7 +3,6 @@
 import os
 import logging
 import duckdb
-import pandas as pd
 import streamlit as st
 
 
