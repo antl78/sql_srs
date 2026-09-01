@@ -59,19 +59,21 @@ with st.sidebar:
 
     if theme:
         exercise = con.execute(f"SELECT * FROM memory_state WHERE theme = '{theme}'").df().sort_values("last_reviewed").reset_index()
-        st.write(exercise)
-
         exercise_name = exercise.loc[0, "exercise_name"]
+        st.caption(f"Exercice : {exercise_name.replace('_', ' ')}")
+
         with open(f"answers/{exercise_name}.sql", "r") as f:
             answer = f.read()
 
         solution_df = con.execute(answer).df()
 
-st.header("Entrez votre code SQL :")
-
 if not theme:
     st.info("Sélectionnez un thème dans la barre à gauche")
 else:
+    st.subheader(exercise_name.replace("_", " ").capitalize())
+    st.write(exercise.loc[0, "statement"])
+
+    st.header("Entrez votre code SQL :")
     query = st.text_area(label="Votre code SQL ici", key="user_input")
 
     if st.button("Valider"):

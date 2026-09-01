@@ -16,6 +16,20 @@ data = {
         "orders_details_and_customers",
         "orders_customers_and_products",
     ],
+    "statement": [
+        "Associe chaque boisson à chaque plat pour générer toutes les combinaisons "
+        "possibles (produit cartésien).",
+        "Associe chaque taille à chaque marque pour générer toutes les combinaisons "
+        "possibles (produit cartésien).",
+        "Pour chaque commande, retrouve le produit commandé et la quantité en associant "
+        "les commandes (df_orders) à leurs détails (df_order_details) via order_id.",
+        "Ajoute le nom du client à chaque commande détaillée, en associant "
+        "detailed_order (résultat de l'exercice précédent) à df_customers via "
+        "customer_id.",
+        "Ajoute le nom et le prix du produit à chaque commande, en associant "
+        "order_client (résultat de l'exercice précédent) à df_products via "
+        "product_id.",
+    ],
     "tables": [
         ["beverages", "food_items"],
         ["sizes", "trademarks"],
