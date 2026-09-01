@@ -8,10 +8,22 @@ con = duckdb.connect(database="data/exercises_sql_tables.duckdb", read_only=Fals
 # EXERCISES LIST
 # ----------------------------------------
 data = {
-    "theme": ["cross_joins", "cross_joins"],
-    "exercise_name": ["beverages_and_food", "sizes_and_trademarks"],
-    "tables": [["beverages", "food_items"], ["sizes", "trademarks"]],
-    "last_reviewed": ["1980-01-01", "1970-01-01"],
+    "theme": ["cross_joins", "cross_joins", "inner_joins", "inner_joins", "inner_joins"],
+    "exercise_name": [
+        "beverages_and_food",
+        "sizes_and_trademarks",
+        "orders_and_order_details",
+        "orders_details_and_customers",
+        "orders_customers_and_products",
+    ],
+    "tables": [
+        ["beverages", "food_items"],
+        ["sizes", "trademarks"],
+        ["orders", "order_details"],
+        ["orders", "order_details", "customers"],
+        ["orders", "order_details", "customers", "products"],
+    ],
+    "last_reviewed": ["1980-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01"],
 }
 memory_state_df = pd.DataFrame(data)
 con.execute("CREATE TABLE IF NOT EXISTS memory_state AS SELECT * FROM memory_state_df")
@@ -58,5 +70,41 @@ Lewis
 '''
 trademarks = pd.read_csv(io.StringIO(trademarks))
 con.execute("CREATE TABLE IF NOT EXISTS trademarks AS SELECT * FROM trademarks")
+
+
+# ----------------------------------------
+# INNER JOIN EXERCISES
+# ----------------------------------------
+
+orders_data = {
+    "order_id": [1, 2, 3, 4, 5],
+    "customer_id": [101, 102, 103, 104, 105],
+}
+orders = pd.DataFrame(orders_data)
+con.execute("CREATE TABLE IF NOT EXISTS orders AS SELECT * FROM orders")
+
+customers_data = {
+    "customer_id": [101, 102, 103, 104, 105, 106],
+    "customer_name": ["Toufik", "Daniel", "Tancrède", "Kaouter", "Jean-Nicolas", "David"],
+}
+customers = pd.DataFrame(customers_data)
+con.execute("CREATE TABLE IF NOT EXISTS customers AS SELECT * FROM customers")
+
+p_names = ["Laptop", "Ipad", "Livre", "Petitos"]
+products_data = {
+    "product_id": [101, 103, 104, 105],
+    "product_name": p_names,
+    "product_price": [800, 400, 30, 2],
+}
+products = pd.DataFrame(products_data)
+con.execute("CREATE TABLE IF NOT EXISTS products AS SELECT * FROM products")
+
+order_details_data = {
+    "order_id": [1, 2, 3, 4, 5],
+    "product_id": [102, 104, 101, 103, 105],
+    "quantity": [2, 1, 3, 2, 1],
+}
+order_details = pd.DataFrame(order_details_data)
+con.execute("CREATE TABLE IF NOT EXISTS order_details AS SELECT * FROM order_details")
 
 con.close()
