@@ -17,7 +17,13 @@ if "exercises_sql_tables.duckdb" not in os.listdir("data"):
     exec(open("init_db.py").read()) # pylint disable
     # subprocess.run(["python", "init_db.py"]) # ne marche pas avec Streamlit
 
-con = duckdb.connect(database="data/exercises_sql_tables.duckdb", read_only=False)
+@st.cache_resource
+def get_connection():
+    """Connexion DuckDB unique, réutilisée entre les reruns Streamlit."""
+    return duckdb.connect(database="data/exercises_sql_tables.duckdb", read_only=False)
+
+
+con = get_connection()
 
 
 def check_users_solution() -> None:
@@ -74,7 +80,10 @@ else:
             st.rerun()
 
     if st.button("Reset"):
-        con.execute(f"UPDATE memory_state SET last_reviewed = '1970-01-01'")
+        con.execute(
+            "UPDATE memory_state SET last_reviewed = '1970-01-01' WHERE exercise_name = ?",
+            [exercise_name],
+        )
         st.rerun()
 
     tab2, tab3 = st.tabs(["Tables", "Solution"])
