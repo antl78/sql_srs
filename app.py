@@ -44,12 +44,16 @@ def check_users_solution() -> None:
 
 
 with st.sidebar:
-    available_themes_df = con.execute("SELECT DISTINCT theme FROM memory_state").df()
-    theme = st.selectbox(
+    available_themes_df = con.execute(
+        "SELECT DISTINCT theme FROM memory_state ORDER BY theme"
+    ).df()
+    themes = available_themes_df["theme"].tolist()
+
+    theme = st.radio(
         "Que voulez-vous revoir ?",
-        available_themes_df["theme"].unique(),
+        themes,
         index=None,
-        placeholder="Sélectionnez un thème...",
+        key="selected_theme",
     )
     st.write("Vous avez sélectionné :", theme)
 
