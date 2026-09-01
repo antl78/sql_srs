@@ -19,9 +19,9 @@ data = {
     "tables": [
         ["beverages", "food_items"],
         ["sizes", "trademarks"],
-        ["orders", "order_details"],
-        ["orders", "order_details", "customers"],
-        ["orders", "order_details", "customers", "products"],
+        ["df_orders", "df_order_details"],
+        ["df_customers", "detailed_order"],
+        ["order_client", "df_products"],
     ],
     "last_reviewed": ["1980-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01"],
 }
@@ -80,15 +80,15 @@ orders_data = {
     "order_id": [1, 2, 3, 4, 5],
     "customer_id": [101, 102, 103, 104, 105],
 }
-orders = pd.DataFrame(orders_data)
-con.execute("CREATE TABLE IF NOT EXISTS orders AS SELECT * FROM orders")
+df_orders = pd.DataFrame(orders_data)
+con.execute("CREATE TABLE IF NOT EXISTS df_orders AS SELECT * FROM df_orders")
 
 customers_data = {
     "customer_id": [101, 102, 103, 104, 105, 106],
     "customer_name": ["Toufik", "Daniel", "Tancrède", "Kaouter", "Jean-Nicolas", "David"],
 }
-customers = pd.DataFrame(customers_data)
-con.execute("CREATE TABLE IF NOT EXISTS customers AS SELECT * FROM customers")
+df_customers = pd.DataFrame(customers_data)
+con.execute("CREATE TABLE IF NOT EXISTS df_customers AS SELECT * FROM df_customers")
 
 p_names = ["Laptop", "Ipad", "Livre", "Petitos"]
 products_data = {
@@ -96,15 +96,40 @@ products_data = {
     "product_name": p_names,
     "product_price": [800, 400, 30, 2],
 }
-products = pd.DataFrame(products_data)
-con.execute("CREATE TABLE IF NOT EXISTS products AS SELECT * FROM products")
+df_products = pd.DataFrame(products_data)
+con.execute("CREATE TABLE IF NOT EXISTS df_products AS SELECT * FROM df_products")
 
 order_details_data = {
     "order_id": [1, 2, 3, 4, 5],
     "product_id": [102, 104, 101, 103, 105],
     "quantity": [2, 1, 3, 2, 1],
 }
-order_details = pd.DataFrame(order_details_data)
-con.execute("CREATE TABLE IF NOT EXISTS order_details AS SELECT * FROM order_details")
+df_order_details = pd.DataFrame(order_details_data)
+con.execute("CREATE TABLE IF NOT EXISTS df_order_details AS SELECT * FROM df_order_details")
+
+# Table "detailed_order" : résultat attendu de l'exercice 1 (df_orders INNER JOIN
+# df_order_details), matérialisée pour servir de point de départ à l'exercice 2
+# sans avoir besoin d'un CTE.
+con.execute("""
+    CREATE TABLE IF NOT EXISTS detailed_order AS
+    SELECT * FROM df_orders
+    INNER JOIN df_order_details
+    USING (order_id)
+""")
+
+# Table "order_client" : résultat attendu de l'exercice 2 (df_customers INNER JOIN
+# detailed_order), matérialisée pour servir de point de départ à l'exercice 3
+# sans avoir besoin d'un CTE.
+con.execute("""
+    CREATE TABLE IF NOT EXISTS order_client AS
+    SELECT df_customers.customer_id,
+        customer_name,
+        order_id,
+        product_id,
+        quantity
+    FROM df_customers
+    INNER JOIN detailed_order
+    ON df_customers.customer_id = detailed_order.customer_id
+""")
 
 con.close()

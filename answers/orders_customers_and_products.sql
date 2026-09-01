@@ -1,29 +1,3 @@
-WITH orders_with_details AS (
-    SELECT
-        o.order_id,
-        o.customer_id,
-        od.product_id,
-        od.quantity
-    FROM orders o
-    INNER JOIN order_details od
-        ON o.order_id = od.order_id
-),
-orders_with_customers AS (
-    SELECT
-        owd.order_id,
-        c.customer_name,
-        owd.product_id,
-        owd.quantity
-    FROM orders_with_details owd
-    INNER JOIN customers c
-        ON owd.customer_id = c.customer_id
-)
-SELECT
-    owc.order_id,
-    owc.customer_name,
-    p.product_name,
-    p.product_price,
-    owc.quantity
-FROM orders_with_customers owc
-INNER JOIN products p
-    ON owc.product_id = p.product_id
+SELECT * FROM order_client
+INNER JOIN df_products
+USING (product_id)
