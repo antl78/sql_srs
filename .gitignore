@@ -3,3 +3,4 @@ venv/
 pc_collegue/
 test_db.py
 *.csv
+*.duckdb.wal
