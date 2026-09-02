@@ -30,17 +30,17 @@ data = {
         "Pour chaque commande, retrouve le produit commandé et la quantité en associant "
         "les commandes (df_orders) à leurs détails (df_order_details) via order_id.",
         "Ajoute le nom du client à chaque commande détaillée, en associant "
-        "detailed_order (résultat de l'exercice précédent) à df_customers via "
+        "detailed_order à df_customers via "
         "customer_id.",
         "Ajoute le nom et le prix du produit à chaque commande, en associant "
-        "order_client (résultat de l'exercice précédent) à df_products via "
+        "order_client à df_products via "
         "product_id.",
         "Associe chaque client à ses commandes détaillées, même s'il n'a jamais "
         "commandé, en associant les clients (df_customers) aux commandes (df_orders) "
         "puis aux détails de commande (df_order_details) via des LEFT JOIN successifs.",
         "Ajoute le nom et le prix du produit à chaque commande client détaillée, même "
         "si le produit commandé n'existe pas dans le catalogue, en associant "
-        "customer_order_details (résultat de l'exercice précédent) à df_products via "
+        "customer_order_details à df_products via "
         "un LEFT JOIN sur product_id.",
     ],
     "tables": [
