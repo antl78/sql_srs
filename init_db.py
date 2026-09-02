@@ -38,6 +38,9 @@ data = {
         ["order_client", "df_products"],
     ],
     "last_reviewed": ["1980-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01"],
+    # Position dans l'échelle de révision REVIEW_INTERVALS (app.py) : avance
+    # d'un cran à chaque succès, retombe à 0 au premier échec.
+    "interval_step": [0, 0, 0, 0, 0],
 }
 memory_state_df = pd.DataFrame(data)
 con.execute("CREATE TABLE IF NOT EXISTS memory_state AS SELECT * FROM memory_state_df")
