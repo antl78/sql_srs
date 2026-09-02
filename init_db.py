@@ -1,4 +1,5 @@
 import io
+import random
 import pandas as pd
 import duckdb
 
@@ -13,6 +14,7 @@ data = {
         "inner_joins", "inner_joins", "inner_joins",
         "left_joins", "left_joins", "left_joins", "left_joins",
         "outer_join",
+        "self_joins",
     ],
     "exercise_name": [
         "beverages_and_food",
@@ -25,6 +27,7 @@ data = {
         "store_customers_and_stores",
         "customer_stores_and_store_products",
         "stores_and_products_catalog",
+        "meetings_with_benjamin",
     ],
     "statement": [
         "Associe chaque boisson à chaque plat pour générer toutes les combinaisons "
@@ -55,6 +58,10 @@ data = {
         "produit, même si un produit vendu ne figure plus au catalogue ou si un "
         "produit du catalogue n'est vendu dans aucun magasin, en réalisant un "
         "FULL OUTER JOIN avec product_catalog sur product_id.",
+        "Retrouve les collègues qui étaient en réunion avec Benjamin, en "
+        "réalisant une auto-jointure (self join) de merged_df sur elle-même "
+        "via meeting_id, en gardant à gauche les lignes de Benjamin et en "
+        "excluant Benjamin à droite.",
     ],
     "tables": [
         ["beverages", "food_items"],
@@ -67,14 +74,16 @@ data = {
         ["store_customers", "stores"],
         ["customer_stores", "store_products"],
         ["stores_and_products", "product_catalog"],
+        ["merged_df"],
     ],
     "last_reviewed": [
         "1980-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
         "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
+        "1970-01-01",
     ],
     # Position dans l'échelle de révision REVIEW_INTERVALS (app.py) : avance
     # d'un cran à chaque succès, retombe à 0 au premier échec.
-    "interval_step": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "interval_step": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 }
 memory_state_df = pd.DataFrame(data)
 con.execute("CREATE TABLE IF NOT EXISTS memory_state AS SELECT * FROM memory_state_df")
@@ -267,5 +276,31 @@ con.execute("""
     LEFT JOIN store_products
     USING (store_id)
 """)
+
+# ----------------------------------------
+# SELF JOIN EXERCISE
+# ----------------------------------------
+# Nouveau jeu de données (réunions/participants), indépendant des tables
+# précédentes : simule des réunions avec des participants aléatoires, pour
+# l'exercice self join (retrouver les collègues de Benjamin en réunion).
+
+random.seed(42)
+person_names = ["Benjamin", "Florian", "Tarik", "Bob", "Sirine", "Alice"]
+
+meetings_data = []
+for meeting_id in range(150):
+    persons_in_meet = random.sample(person_names, random.randint(1, 5))
+    for person_name in persons_in_meet:
+        meetings_data.append((meeting_id, person_name))
+meetings_df = pd.DataFrame(meetings_data, columns=["meeting_id", "person_name"])
+
+meeting_durations = []
+for meeting_id in meetings_df["meeting_id"].unique():
+    duration = random.randint(10, 60)
+    meeting_durations.append((meeting_id, duration))
+durations_df = pd.DataFrame(meeting_durations, columns=["meeting_id", "duration_minutes"])
+
+merged_df = meetings_df.merge(durations_df, on="meeting_id")
+con.execute("CREATE TABLE IF NOT EXISTS merged_df AS SELECT * FROM merged_df")
 
 con.close()
