@@ -8,13 +8,19 @@ con = duckdb.connect(database="data/exercises_sql_tables.duckdb", read_only=Fals
 # EXERCISES LIST
 # ----------------------------------------
 data = {
-    "theme": ["cross_joins", "cross_joins", "inner_joins", "inner_joins", "inner_joins"],
+    "theme": [
+        "cross_joins", "cross_joins",
+        "inner_joins", "inner_joins", "inner_joins",
+        "left_joins", "left_joins",
+    ],
     "exercise_name": [
         "beverages_and_food",
         "sizes_and_trademarks",
         "orders_and_order_details",
         "orders_details_and_customers",
         "orders_customers_and_products",
+        "customers_orders_and_details",
+        "customer_order_details_and_products",
     ],
     "statement": [
         "Associe chaque boisson à chaque plat pour générer toutes les combinaisons "
@@ -29,6 +35,13 @@ data = {
         "Ajoute le nom et le prix du produit à chaque commande, en associant "
         "order_client (résultat de l'exercice précédent) à df_products via "
         "product_id.",
+        "Associe chaque client à ses commandes détaillées, même s'il n'a jamais "
+        "commandé, en associant les clients (df_customers) aux commandes (df_orders) "
+        "puis aux détails de commande (df_order_details) via des LEFT JOIN successifs.",
+        "Ajoute le nom et le prix du produit à chaque commande client détaillée, même "
+        "si le produit commandé n'existe pas dans le catalogue, en associant "
+        "customer_order_details (résultat de l'exercice précédent) à df_products via "
+        "un LEFT JOIN sur product_id.",
     ],
     "tables": [
         ["beverages", "food_items"],
@@ -36,15 +49,30 @@ data = {
         ["df_orders", "df_order_details"],
         ["df_customers", "detailed_order"],
         ["order_client", "df_products"],
+        ["df_customers", "df_orders", "df_order_details"],
+        ["customer_order_details", "df_products"],
     ],
-    "last_reviewed": ["1980-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01"],
+    "last_reviewed": [
+        "1980-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
+        "1970-01-01", "1970-01-01",
+    ],
     # Position dans l'échelle de révision REVIEW_INTERVALS (app.py) : avance
     # d'un cran à chaque succès, retombe à 0 au premier échec.
-    "interval_step": [0, 0, 0, 0, 0],
+    "interval_step": [0, 0, 0, 0, 0, 0, 0],
 }
 memory_state_df = pd.DataFrame(data)
 con.execute("CREATE TABLE IF NOT EXISTS memory_state AS SELECT * FROM memory_state_df")
 
+# Si la base existe déjà (memory_state pré-existant), on ajoute seulement les
+# exercices absents plutôt que de recréer la table : ça évite d'écraser la
+# progression (last_reviewed / interval_step) des exercices déjà en cours.
+con.execute("""
+    INSERT INTO memory_state
+    SELECT n.* FROM memory_state_df n
+    WHERE NOT EXISTS (
+        SELECT 1 FROM memory_state m WHERE m.exercise_name = n.exercise_name
+    )
+""")
 
 # ----------------------------------------
 # CROSS JOIN EXERCISES
@@ -147,6 +175,23 @@ con.execute("""
     FROM df_customers
     INNER JOIN detailed_order
     ON df_customers.customer_id = detailed_order.customer_id
+""")
+
+
+# ----------------------------------------
+# LEFT JOIN EXERCISES
+# ----------------------------------------
+
+# Table "customer_order_details" : résultat attendu de l'exercice 1 (df_customers
+# LEFT JOIN df_orders LEFT JOIN df_order_details), matérialisée pour servir de
+# point de départ à l'exercice 2 sans avoir besoin d'un CTE.
+con.execute("""
+    CREATE TABLE IF NOT EXISTS customer_order_details AS
+    SELECT * FROM df_customers
+    LEFT JOIN df_orders
+    USING (customer_id)
+    LEFT JOIN df_order_details
+    USING (order_id)
 """)
 
 con.close()
