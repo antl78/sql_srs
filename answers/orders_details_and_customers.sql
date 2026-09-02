@@ -1,8 +1,8 @@
-SELECT df_customers.customer_id,
+SELECT customers.customer_id,
 customer_name,
 order_id,
 product_id,
 quantity
-FROM df_customers
+FROM customers
 INNER JOIN detailed_order
-on df_customers.customer_id = detailed_order.customer_id
+on customers.customer_id = detailed_order.customer_id

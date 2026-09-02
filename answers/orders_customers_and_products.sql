@@ -1,3 +1,3 @@
 SELECT * FROM order_client
-INNER JOIN df_products
+INNER JOIN products
 USING (product_id)

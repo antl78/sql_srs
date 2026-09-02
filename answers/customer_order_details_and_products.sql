@@ -1,3 +1,3 @@
 SELECT * FROM customer_order_details
-LEFT JOIN df_products
+LEFT JOIN products
 USING (product_id)

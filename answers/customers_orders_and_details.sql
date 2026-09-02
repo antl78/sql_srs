@@ -1,5 +1,5 @@
-SELECT * FROM df_customers
-LEFT JOIN df_orders
+SELECT * FROM customers
+LEFT JOIN orders
 USING (customer_id)
-LEFT JOIN df_order_details
+LEFT JOIN order_details
 USING (order_id)

@@ -1,3 +1,3 @@
-SELECT * FROM df_orders
-INNER JOIN df_order_details
+SELECT * FROM orders
+INNER JOIN order_details
 USING (order_id)
