@@ -255,3 +255,5 @@ else:
 
     with tab3:
         st.write(answer)
+        st.caption("Résultat de la solution :")
+        st.dataframe(solution_df)
