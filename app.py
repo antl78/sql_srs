@@ -2,6 +2,7 @@
 
 import os
 import logging
+import random
 from datetime import date, timedelta
 
 import duckdb
@@ -135,125 +136,199 @@ def scroll_to_top() -> None:
     )
 
 
+def reveal_flashcard_answer() -> None:
+    """Callback (on_click) du bouton Afficher la réponse."""
+    st.session_state["flashcard_revealed"] = True
+
+
+def next_flashcard(card_names: list) -> None:
+    """Callback (on_click) du bouton Carte suivante : tire une nouvelle
+    carte au hasard (différente de la précédente s'il y en a plusieurs) et
+    masque la réponse."""
+    previous = st.session_state.get("flashcard_current")
+    choices = [c for c in card_names if c != previous] or card_names
+    st.session_state["flashcard_current"] = random.choice(choices)
+    st.session_state["flashcard_revealed"] = False
+
+
 with st.sidebar:
-    theme_counts_df = con.execute(
-        "SELECT theme, "
-        "COUNT(*) FILTER (WHERE CAST(last_reviewed AS DATE) <= CURRENT_DATE) AS due "
-        "FROM memory_state GROUP BY theme ORDER BY theme"
-    ).df()
-    due_by_theme = dict(zip(theme_counts_df["theme"], theme_counts_df["due"].astype(int)))
-    st.metric("À réviser aujourd'hui", sum(due_by_theme.values()))
-
-    themes = theme_counts_df["theme"].tolist()
-
-    # Détail par thème affiché à part (et non dans le label des options du
-    # radio) : un format_func dont le texte change d'un rerun à l'autre (ici,
-    # le nombre à réviser qui diminue au fil des validations) fait perdre à
-    # Streamlit la sélection du radio de façon aléatoire — st.session_state
-    # ["selected_theme"] se retrouve alors avec le texte affiché au lieu de
-    # la valeur choisie. On garde donc des options de radio à texte fixe.
-    st.caption(
-        " · ".join(f"{t} : {due_by_theme.get(t, 0)} à réviser" for t in themes)
+    app_mode = st.radio(
+        "Mode",
+        ["Exercices SQL", "Mémocards"],
+        key="app_mode",
     )
+    st.divider()
 
-    theme = st.radio(
-        "Que voulez-vous revoir ?",
-        themes,
-        index=None,
-        key="selected_theme",
-    )
+if app_mode == "Exercices SQL":
+    with st.sidebar:
+        theme_counts_df = con.execute(
+            "SELECT theme, "
+            "COUNT(*) FILTER (WHERE CAST(last_reviewed AS DATE) <= CURRENT_DATE) AS due "
+            "FROM memory_state GROUP BY theme ORDER BY theme"
+        ).df()
+        due_by_theme = dict(zip(theme_counts_df["theme"], theme_counts_df["due"].astype(int)))
+        st.metric("À réviser aujourd'hui", sum(due_by_theme.values()))
 
-    if theme:
-        exercise = con.execute(f"SELECT * FROM memory_state WHERE theme = '{theme}'").df().sort_values("last_reviewed").reset_index()
-        exercise_name = exercise.loc[0, "exercise_name"]
-        st.caption(f"Exercice : {exercise_name.replace('_', ' ')}")
+        themes = theme_counts_df["theme"].tolist()
 
-        with open(f"answers/{exercise_name}.sql", "r") as f:
-            answer = f.read()
+        # Détail par thème affiché à part (et non dans le label des options du
+        # radio) : un format_func dont le texte change d'un rerun à l'autre (ici,
+        # le nombre à réviser qui diminue au fil des validations) fait perdre à
+        # Streamlit la sélection du radio de façon aléatoire — st.session_state
+        # ["selected_theme"] se retrouve alors avec le texte affiché au lieu de
+        # la valeur choisie. On garde donc des options de radio à texte fixe.
+        st.caption(
+            " · ".join(f"{t} : {due_by_theme.get(t, 0)} à réviser" for t in themes)
+        )
 
-        solution_df = con.execute(answer).df()
+        theme = st.radio(
+            "Que voulez-vous revoir ?",
+            themes,
+            index=None,
+            key="selected_theme",
+        )
 
-if not theme:
-    st.info("Sélectionnez un thème dans la barre à gauche")
+        if theme:
+            exercise = con.execute(f"SELECT * FROM memory_state WHERE theme = '{theme}'").df().sort_values("last_reviewed").reset_index()
+            exercise_name = exercise.loc[0, "exercise_name"]
+            st.caption(f"Exercice : {exercise_name.replace('_', ' ')}")
+
+            with open(f"answers/{exercise_name}.sql", "r") as f:
+                answer = f.read()
+
+            solution_df = con.execute(answer).df()
+
+    if not theme:
+        st.info("Sélectionnez un thème dans la barre à gauche")
+    else:
+        # Un changement d'exercice (nouveau choix de thème, ou passage
+        # automatique au suivant du même thème) efface le verdict précédent,
+        # vide la zone de texte et remonte en haut de la page.
+        if st.session_state.get("checked_exercise") != exercise_name:
+            st.session_state["last_check_correct"] = None
+            st.session_state["check_result"] = None
+            st.session_state["checked_exercise"] = exercise_name
+            scroll_to_top()
+
+        st.subheader(exercise_name.replace("_", " ").capitalize())
+        st.write(exercise.loc[0, "statement"])
+
+        st.header("Entrez votre code SQL :")
+        # La clé dépend de l'exercice : Streamlit traite alors la zone de texte
+        # comme un widget neuf à chaque changement d'exercice, donc vide par
+        # défaut — plus fiable qu'essayer d'effacer une clé fixe après coup.
+        text_key = f"user_input_{exercise_name}"
+        query = st.text_area(
+            label="Votre code SQL ici (Ctrl+Entrée pour valider)",
+            key=text_key,
+            on_change=lambda: run_check(st.session_state[text_key]),
+        )
+
+        if st.button("Valider", type="primary"):
+            run_check(query)
+
+        check_result = st.session_state.get("check_result")
+        if check_result:
+            if check_result["status"] == "empty":
+                st.warning("Veuillez entrer une requête SQL.")
+            elif check_result["status"] == "error":
+                st.error(f"Erreur SQL : {check_result['message']}")
+            elif check_result["status"] == "ok":
+                st.dataframe(check_result["result"])
+                if check_result["correct"]:
+                    st.success("✅ Bonne réponse !")
+                else:
+                    st.error("❌ Ce n'est pas (encore) la bonne réponse.")
+
+        interval_step = int(exercise.loc[0, "interval_step"])
+
+        if st.session_state.get("last_check_correct") is True:
+            next_days = REVIEW_INTERVALS[min(interval_step, len(REVIEW_INTERVALS) - 1)]
+            new_step = min(interval_step + 1, len(REVIEW_INTERVALS) - 1)
+            st.button(
+                f"✅ Continuer → prochaine révision dans {next_days} jours",
+                type="primary",
+                on_click=advance_exercise,
+                args=(exercise_name, next_days, new_step),
+            )
+        elif st.session_state.get("last_check_correct") is False:
+            st.button(
+                f"🔁 Revoir dans {REVIEW_INTERVALS[0]} jours",
+                on_click=reschedule_exercise,
+                args=(exercise_name, REVIEW_INTERVALS[0], 0),
+            )
+
+        st.button(
+            "🔄 Remettre à réviser maintenant",
+            help=(
+                "Repasse cet exercice en tête de file dès aujourd'hui et remet "
+                "son intervalle à 2 jours — utile pour le refaire tout de "
+                "suite sans attendre son échéance normale."
+            ),
+            on_click=reset_exercise_now,
+            args=(exercise_name,),
+        )
+
+        tab2, tab3 = st.tabs(["Tables", "Solution"])
+
+        with tab2:
+            exercise_tables = exercise.loc[0, "tables"]
+            for table in exercise_tables:
+                st.write(f"table: {table}")
+                df_table = con.execute(f"SELECT * FROM {table}").df()
+                st.dataframe(df_table)
+
+        with tab3:
+            st.write(answer)
+            st.caption("Résultat de la solution :")
+            st.dataframe(solution_df)
+
 else:
-    # Un changement d'exercice (nouveau choix de thème, ou passage
-    # automatique au suivant du même thème) efface le verdict précédent,
-    # vide la zone de texte et remonte en haut de la page.
-    if st.session_state.get("checked_exercise") != exercise_name:
-        st.session_state["last_check_correct"] = None
-        st.session_state["check_result"] = None
-        st.session_state["checked_exercise"] = exercise_name
-        scroll_to_top()
+    # Mode Mémocards : question/réponse simple pour mémoriser la syntaxe SQL,
+    # pas encore branché sur la répétition espacée (REVIEW_INTERVALS) —
+    # volontairement minimal pour l'instant, le temps de voir si le contenu
+    # et le format conviennent.
+    with st.sidebar:
+        flashcard_themes = con.execute(
+            "SELECT DISTINCT theme FROM flashcards ORDER BY theme"
+        ).df()["theme"].tolist()
 
-    st.subheader(exercise_name.replace("_", " ").capitalize())
-    st.write(exercise.loc[0, "statement"])
-
-    st.header("Entrez votre code SQL :")
-    # La clé dépend de l'exercice : Streamlit traite alors la zone de texte
-    # comme un widget neuf à chaque changement d'exercice, donc vide par
-    # défaut — plus fiable qu'essayer d'effacer une clé fixe après coup.
-    text_key = f"user_input_{exercise_name}"
-    query = st.text_area(
-        label="Votre code SQL ici (Ctrl+Entrée pour valider)",
-        key=text_key,
-        on_change=lambda: run_check(st.session_state[text_key]),
-    )
-
-    if st.button("Valider", type="primary"):
-        run_check(query)
-
-    check_result = st.session_state.get("check_result")
-    if check_result:
-        if check_result["status"] == "empty":
-            st.warning("Veuillez entrer une requête SQL.")
-        elif check_result["status"] == "error":
-            st.error(f"Erreur SQL : {check_result['message']}")
-        elif check_result["status"] == "ok":
-            st.dataframe(check_result["result"])
-            if check_result["correct"]:
-                st.success("✅ Bonne réponse !")
-            else:
-                st.error("❌ Ce n'est pas (encore) la bonne réponse.")
-
-    interval_step = int(exercise.loc[0, "interval_step"])
-
-    if st.session_state.get("last_check_correct") is True:
-        next_days = REVIEW_INTERVALS[min(interval_step, len(REVIEW_INTERVALS) - 1)]
-        new_step = min(interval_step + 1, len(REVIEW_INTERVALS) - 1)
-        st.button(
-            f"✅ Continuer → prochaine révision dans {next_days} jours",
-            type="primary",
-            on_click=advance_exercise,
-            args=(exercise_name, next_days, new_step),
-        )
-    elif st.session_state.get("last_check_correct") is False:
-        st.button(
-            f"🔁 Revoir dans {REVIEW_INTERVALS[0]} jours",
-            on_click=reschedule_exercise,
-            args=(exercise_name, REVIEW_INTERVALS[0], 0),
+        flashcard_theme = st.radio(
+            "Thème à réviser ?",
+            flashcard_themes,
+            index=0 if flashcard_themes else None,
+            key="selected_flashcard_theme",
         )
 
-    st.button(
-        "🔄 Remettre à réviser maintenant",
-        help=(
-            "Repasse cet exercice en tête de file dès aujourd'hui et remet "
-            "son intervalle à 2 jours — utile pour le refaire tout de "
-            "suite sans attendre son échéance normale."
-        ),
-        on_click=reset_exercise_now,
-        args=(exercise_name,),
-    )
+    if not flashcard_theme:
+        st.info("Aucune mémocard disponible pour l'instant.")
+    else:
+        flashcards_df = con.execute(
+            "SELECT * FROM flashcards WHERE theme = ? ORDER BY card_name",
+            [flashcard_theme],
+        ).df()
 
-    tab2, tab3 = st.tabs(["Tables", "Solution"])
+        card_names = list(flashcards_df["card_name"])
 
-    with tab2:
-        exercise_tables = exercise.loc[0, "tables"]
-        for table in exercise_tables:
-            st.write(f"table: {table}")
-            df_table = con.execute(f"SELECT * FROM {table}").df()
-            st.dataframe(df_table)
+        # Changement de thème (ou premier passage) : tirage initial au
+        # hasard, mémorisé dans session_state pour rester stable entre les
+        # reruns tant qu'on reste sur la même carte.
+        if st.session_state.get("flashcard_theme_loaded") != flashcard_theme:
+            st.session_state["flashcard_current"] = random.choice(card_names)
+            st.session_state["flashcard_revealed"] = False
+            st.session_state["flashcard_theme_loaded"] = flashcard_theme
 
-    with tab3:
-        st.write(answer)
-        st.caption("Résultat de la solution :")
-        st.dataframe(solution_df)
+        card = flashcards_df[
+            flashcards_df["card_name"] == st.session_state["flashcard_current"]
+        ].iloc[0]
+
+        nb_cards = len(card_names)
+        st.subheader(f"Mémocard — {flashcard_theme} ({nb_cards} carte{'s' if nb_cards > 1 else ''})")
+        st.write(card["question"])
+
+        if st.session_state.get("flashcard_revealed"):
+            st.success(card["answer"])
+        else:
+            st.button("Afficher la réponse", on_click=reveal_flashcard_answer)
+
+        st.button("Carte suivante ➡️", on_click=next_flashcard, args=(card_names,))

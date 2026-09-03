@@ -303,4 +303,208 @@ durations_df = pd.DataFrame(meeting_durations, columns=["meeting_id", "duration_
 merged_df = meetings_df.merge(durations_df, on="meeting_id")
 con.execute("CREATE TABLE IF NOT EXISTS merged_df AS SELECT * FROM merged_df")
 
+# ----------------------------------------
+# FLASHCARDS (memocards) - fonctions SQL a retenir
+# ----------------------------------------
+# Contrairement aux exercices ci-dessus (requête à écrire, comparée à une
+# solution), une flashcard est une simple paire question/réponse pour la
+# mémorisation de syntaxe. Table séparée de memory_state : pas de notion de
+# "tables" utilisées, mais même logique de planification (last_reviewed /
+# interval_step) pour pouvoir réutiliser REVIEW_INTERVALS plus tard.
+# Pour le moment : uniquement le thème "stats", en syntaxe SQL pure (pas
+# d'équivalent pandas, pour ne pas mélanger les deux dans une même carte).
+
+flashcards_data = {
+    "theme": (
+        ["stats"] * 6
+        + ["window_functions"] * 6
+        + ["cte"] * 1
+        + ["joins"] * 5
+        + ["null_filtering"] * 3
+        + ["aggregates"] * 2
+        + ["sets"] * 1
+        + ["dates"] * 5
+        + ["strings"] * 6
+    ),
+    "card_name": [
+        # stats
+        "moyenne_avg",
+        "ecart_type_echantillon",
+        "ecart_type_population",
+        "group_by",
+        "coalesce",
+        "cast",
+        # window_functions
+        "row_number",
+        "rank",
+        "dense_rank",
+        "lag",
+        "lead",
+        "partition_by",
+        # cte
+        "cte_syntax",
+        # joins
+        "inner_join",
+        "left_join",
+        "full_outer_join",
+        "cross_join",
+        "self_join",
+        # null_filtering
+        "where_vs_having",
+        "nullif",
+        "is_null",
+        # aggregates
+        "count_star_vs_column",
+        "distinct",
+        # sets
+        "union_vs_union_all",
+        # dates
+        "current_date",
+        "extract_date_part",
+        "date_diff",
+        "date_add_interval",
+        "date_trunc",
+        # strings
+        "concat_strings",
+        "substring",
+        "upper_lower",
+        "trim",
+        "length_string",
+        "like_pattern",
+    ],
+    "question": [
+        # stats
+        "Comment calculer la moyenne d'une colonne en SQL ?",
+        "Comment calculer l'écart-type d'échantillon (le plus courant, "
+        "équivalent au .std() par défaut de pandas) en SQL ?",
+        "Comment calculer l'écart-type de population en SQL ?",
+        "Comment regrouper les lignes par une colonne avant d'agréger "
+        "(SUM, COUNT, AVG...) ?",
+        "Comment remplacer les valeurs NULL d'une colonne par une valeur "
+        "par défaut ?",
+        "Comment convertir une colonne vers le type integer ?",
+        # window_functions
+        "Comment numéroter chaque ligne de façon unique, même en cas "
+        "d'égalité (window function) ?",
+        "Comment classer les lignes avec des trous en cas d'ex-aequo "
+        "(ex : 1, 1, 3) ?",
+        "Comment classer les lignes sans trou en cas d'ex-aequo "
+        "(ex : 1, 1, 2) ?",
+        "Comment récupérer la valeur de la ligne précédente dans une "
+        "window function ?",
+        "Comment récupérer la valeur de la ligne suivante dans une "
+        "window function ?",
+        "Quelle clause découpe les lignes en groupes pour une window "
+        "function, sans réduire le nombre de lignes (contrairement à "
+        "GROUP BY) ?",
+        # cte
+        "Comment écrire une CTE (Common Table Expression) ?",
+        # joins
+        "Quel JOIN ne garde que les lignes présentes dans les deux "
+        "tables ?",
+        "Quel JOIN garde toutes les lignes de la table de gauche, avec "
+        "NULL côté droit si pas de correspondance ?",
+        "Quel JOIN garde toutes les lignes des deux tables, avec NULL du "
+        "côté manquant ?",
+        "Quel JOIN génère toutes les combinaisons possibles entre deux "
+        "tables (produit cartésien) ?",
+        "Comment appelle-t-on une jointure d'une table sur elle-même ?",
+        # null_filtering
+        "Quelle est la différence entre WHERE et HAVING ?",
+        "Comment éviter une division par zéro en remplaçant une valeur "
+        "par NULL si elle est égale à une autre ?",
+        "Comment tester si une valeur est NULL ?",
+        # aggregates
+        "Quelle est la différence entre COUNT(*) et COUNT(colonne) ?",
+        "Comment éliminer les doublons dans un résultat ?",
+        # sets
+        "Quelle est la différence entre UNION et UNION ALL ?",
+        # dates
+        "Comment récupérer la date du jour ?",
+        "Comment extraire une partie d'une date (année, mois, jour...) ?",
+        "Comment calculer le nombre de jours entre deux dates ?",
+        "Comment ajouter un intervalle de temps à une date (ex : +7 "
+        "jours) ?",
+        "Comment tronquer une date au début du mois (ou de la semaine, "
+        "année...) ?",
+        # strings
+        "Comment concaténer deux chaînes de caractères ?",
+        "Comment extraire une sous-chaîne à partir d'une position "
+        "donnée ?",
+        "Comment convertir une chaîne en majuscules / minuscules ?",
+        "Comment supprimer les espaces en début et fin de chaîne ?",
+        "Comment obtenir la longueur d'une chaîne de caractères ?",
+        "Comment rechercher un motif (wildcard) dans une chaîne ?",
+    ],
+    "answer": [
+        # stats
+        "AVG(colonne)",
+        "STDDEV(colonne)  -- alias de STDDEV_SAMP(colonne)",
+        "STDDEV_POP(colonne)",
+        "GROUP BY colonne",
+        "COALESCE(colonne, valeur_par_defaut)",
+        "CAST(colonne AS INTEGER)",
+        # window_functions
+        "ROW_NUMBER() OVER (ORDER BY colonne)",
+        "RANK() OVER (ORDER BY colonne)",
+        "DENSE_RANK() OVER (ORDER BY colonne)",
+        "LAG(colonne) OVER (ORDER BY ...)",
+        "LEAD(colonne) OVER (ORDER BY ...)",
+        "PARTITION BY colonne",
+        # cte
+        "WITH nom AS (SELECT ...) SELECT ... FROM nom",
+        # joins
+        "INNER JOIN",
+        "LEFT JOIN",
+        "FULL OUTER JOIN",
+        "CROSS JOIN",
+        "self join  -- la même table jointe à elle-même via deux alias",
+        # null_filtering
+        "WHERE filtre avant le GROUP BY (lignes brutes), HAVING filtre "
+        "après (sur le résultat agrégé)",
+        "NULLIF(colonne, 0)",
+        "IS NULL / IS NOT NULL  -- jamais '= NULL', NULL n'est égal à rien",
+        # aggregates
+        "COUNT(*) compte toutes les lignes, COUNT(colonne) ignore les "
+        "NULL de cette colonne",
+        "SELECT DISTINCT colonne",
+        # sets
+        "UNION déduplique les résultats (donc plus lent), UNION ALL "
+        "garde tous les doublons",
+        # dates
+        "CURRENT_DATE  -- ou CURRENT_TIMESTAMP pour la date+heure",
+        "EXTRACT(YEAR FROM colonne)  -- standard ANSI, portable",
+        "date_fin - date_debut  -- Postgres/DuckDB (résultat en jours) ; "
+        "DATEDIFF(date_fin, date_debut) en MySQL, "
+        "DATEDIFF(day, date_debut, date_fin) en SQL Server (l'ordre des "
+        "arguments change selon le SGBD, piège classique)",
+        "date_colonne + INTERVAL '7 days'  -- Postgres/DuckDB ; "
+        "DATE_ADD(date_colonne, INTERVAL 7 DAY) en MySQL",
+        "DATE_TRUNC('month', colonne)  -- Postgres/DuckDB, pas MySQL",
+        # strings
+        "colonne1 || colonne2  -- standard ANSI ; CONCAT(colonne1, "
+        "colonne2) marche presque partout aussi",
+        "SUBSTRING(colonne, position, longueur)",
+        "UPPER(colonne) / LOWER(colonne)",
+        "TRIM(colonne)",
+        "LENGTH(colonne)  -- LEN(colonne) en SQL Server",
+        "colonne LIKE '%motif%'  -- % = plusieurs caractères, _ = un "
+        "seul ; ILIKE (Postgres/DuckDB) pour ignorer la casse",
+    ],
+    "last_reviewed": ["1970-01-01"] * 35,
+    "interval_step": [0] * 35,
+}
+flashcards_df = pd.DataFrame(flashcards_data)
+con.execute("CREATE TABLE IF NOT EXISTS flashcards AS SELECT * FROM flashcards_df")
+
+# Même logique que pour memory_state : on n'ajoute que les cartes absentes,
+# pour ne pas écraser la progression de révision des cartes déjà en place.
+con.execute("""
+    INSERT INTO flashcards
+    SELECT n.* FROM flashcards_df n
+    WHERE NOT EXISTS (
+        SELECT 1 FROM flashcards m WHERE m.card_name = n.card_name
+    )
+""")
+
 con.close()
