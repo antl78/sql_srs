@@ -176,7 +176,9 @@ if app_mode == "Exercices SQL":
         # le nombre à réviser qui diminue au fil des validations) fait perdre à
         # Streamlit la sélection du radio de façon aléatoire — st.session_state
         # ["selected_theme"] se retrouve alors avec le texte affiché au lieu de
-        # la valeur choisie. On garde donc des options de radio à texte fixe.
+        # la valeur choisie. Le format_func ci-dessous ne dépend que de `t`
+        # (texte fixe, ne change jamais d'un rerun à l'autre) : contrairement au
+        # compteur "à réviser", il ne recrée donc pas ce bug.
         st.caption(
             " · ".join(f"{t} : {due_by_theme.get(t, 0)} à réviser" for t in themes)
         )
@@ -186,12 +188,13 @@ if app_mode == "Exercices SQL":
             themes,
             index=None,
             key="selected_theme",
+            format_func=lambda t: t.replace("_", " ").title(),
         )
 
         if theme:
             exercise = con.execute(f"SELECT * FROM memory_state WHERE theme = '{theme}'").df().sort_values("last_reviewed").reset_index()
             exercise_name = exercise.loc[0, "exercise_name"]
-            st.caption(f"Exercice : {exercise_name.replace('_', ' ')}")
+            st.caption(f"Exercice : {exercise_name.replace('_', ' ').title()}")
 
             with open(f"answers/{exercise_name}.sql", "r") as f:
                 answer = f.read()
@@ -210,7 +213,7 @@ if app_mode == "Exercices SQL":
             st.session_state["checked_exercise"] = exercise_name
             scroll_to_top()
 
-        st.subheader(exercise_name.replace("_", " ").capitalize())
+        st.subheader(exercise_name.replace("_", " ").title())
         st.write(exercise.loc[0, "statement"])
 
         st.header("Entrez votre code SQL :")
