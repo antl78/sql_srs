@@ -15,6 +15,8 @@ data = {
         "left_joins", "left_joins", "left_joins", "left_joins",
         "outer_join",
         "self_joins",
+        "aggregation", "aggregation", "aggregation",
+        "aggregation", "aggregation", "aggregation",
     ],
     "exercise_name": [
         "beverages_and_food",
@@ -28,6 +30,12 @@ data = {
         "customer_stores_and_store_products",
         "stores_and_products_catalog",
         "meetings_with_benjamin",
+        "total_sales_per_client",
+        "average_basket_per_client",
+        "sales_count_per_client",
+        "sales_stats_per_client",
+        "top_3_clients_by_revenue",
+        "clients_above_average_basket",
     ],
     "statement": [
         "Associe chaque boisson à chaque plat pour générer toutes les combinaisons "
@@ -62,6 +70,22 @@ data = {
         "réalisant une auto-jointure (self join) de merged_df sur elle-même "
         "via meeting_id, en gardant à gauche les lignes de Benjamin et en "
         "excluant Benjamin à droite.",
+        "Calcule le montant total des ventes (chiffre d'affaires) pour "
+        "chaque client, en regroupant sales avec GROUP BY sur "
+        "client_name.",
+        "Calcule le panier moyen (montant moyen par vente) de chaque "
+        "client, en regroupant sales avec GROUP BY sur client_name.",
+        "Compte le nombre de ventes réalisées par chaque client, en "
+        "regroupant sales avec GROUP BY sur client_name.",
+        "Retrouve, pour chaque client, sa plus petite vente, sa plus "
+        "grande vente et l'écart-type de ses ventes (variabilité du "
+        "panier), en regroupant sales avec GROUP BY sur client_name.",
+        "Retrouve les 3 clients ayant généré le plus de chiffre "
+        "d'affaires, du plus grand au plus petit.",
+        "Retrouve les clients dont le panier moyen dépasse la moyenne "
+        "générale des paniers moyens (moyenne des moyennes par client), "
+        "en utilisant deux CTE plutôt qu'une sous-requête : une pour le "
+        "panier moyen par client, une pour la moyenne générale.",
     ],
     "tables": [
         ["beverages", "food_items"],
@@ -75,15 +99,22 @@ data = {
         ["customer_stores", "store_products"],
         ["stores_and_products", "product_catalog"],
         ["merged_df"],
+        ["sales"],
+        ["sales"],
+        ["sales"],
+        ["sales"],
+        ["sales"],
+        ["sales"],
     ],
     "last_reviewed": [
         "1980-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
         "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
-        "1970-01-01",
+        "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
+        "1970-01-01", "1970-01-01",
     ],
     # Position dans l'échelle de révision REVIEW_INTERVALS (app.py) : avance
     # d'un cran à chaque succès, retombe à 0 au premier échec.
-    "interval_step": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "interval_step": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 }
 memory_state_df = pd.DataFrame(data)
 con.execute("CREATE TABLE IF NOT EXISTS memory_state AS SELECT * FROM memory_state_df")
@@ -302,6 +333,32 @@ durations_df = pd.DataFrame(meeting_durations, columns=["meeting_id", "duration_
 
 merged_df = meetings_df.merge(durations_df, on="meeting_id")
 con.execute("CREATE TABLE IF NOT EXISTS merged_df AS SELECT * FROM merged_df")
+
+# ----------------------------------------
+# AGGREGATION EXERCISES
+# ----------------------------------------
+# Jeu de données fourni par l'utilisateur : 10 clients, et une liste de 15
+# montants de vente dupliquée (*2, donc 30 ventes). Le mapping vente -> client
+# n'était pas précisé : on mélange les montants (seed fixe, pour rester
+# reproductible) puis on les distribue à tour de rôle sur les 10 clients, ce
+# qui donne exactement 3 ventes par client. Sans ce mélange, distribuer une
+# liste doublée directement (round-robin ou par blocs) recrée mécaniquement
+# les 2 mêmes paniers pour des clients différents (30 = 2 x 15 = 3 x 10).
+
+random.seed(42)
+clients = [
+    "Oussama", "Julie", "Chris", "Tom", "Jean-Nicolas",
+    "Aline", "Ben", "Toufik", "Sylvie", "David",
+]
+ventes = [110, 49, 65, 23, 24, 3.99, 29, 48.77, 44, 10, 60, 12, 62, 19, 75] * 2
+random.shuffle(ventes)
+
+sales_data = {
+    "client_name": [clients[i % len(clients)] for i in range(len(ventes))],
+    "amount": ventes,
+}
+sales = pd.DataFrame(sales_data)
+con.execute("CREATE TABLE IF NOT EXISTS sales AS SELECT * FROM sales")
 
 # ----------------------------------------
 # FLASHCARDS (memocards) - fonctions SQL a retenir
