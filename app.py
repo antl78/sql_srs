@@ -331,6 +331,8 @@ else:
 
         if st.session_state.get("flashcard_revealed"):
             st.success(card["answer"])
+            if card["example"]:
+                st.code(card["example"], language="sql")
         else:
             st.button("Afficher la réponse", on_click=reveal_flashcard_answer)
 

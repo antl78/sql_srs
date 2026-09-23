@@ -365,11 +365,13 @@ con.execute("CREATE TABLE IF NOT EXISTS sales AS SELECT * FROM sales")
 # ----------------------------------------
 # Contrairement aux exercices ci-dessus (requête à écrire, comparée à une
 # solution), une flashcard est une simple paire question/réponse pour la
-# mémorisation de syntaxe. Table séparée de memory_state : pas de notion de
+# mémorisation de syntaxe, accompagnée d'un exemple de requête concret
+# (colonne "example", affiché sous la réponse dans l'app) pour visualiser
+# la syntaxe en contexte. Table séparée de memory_state : pas de notion de
 # "tables" utilisées, mais même logique de planification (last_reviewed /
 # interval_step) pour pouvoir réutiliser REVIEW_INTERVALS plus tard.
-# Pour le moment : uniquement le thème "stats", en syntaxe SQL pure (pas
-# d'équivalent pandas, pour ne pas mélanger les deux dans une même carte).
+# En syntaxe SQL pure (pas d'équivalent pandas, pour ne pas mélanger les
+# deux dans une même carte).
 
 flashcards_data = {
     "theme": (
@@ -548,11 +550,94 @@ flashcards_data = {
         "colonne LIKE '%motif%'  -- % = plusieurs caractères, _ = un "
         "seul ; ILIKE (Postgres/DuckDB) pour ignorer la casse",
     ],
+    "example": [
+        # stats
+        "SELECT AVG(amount) FROM sales;",
+        "SELECT STDDEV(amount) FROM sales;",
+        "SELECT STDDEV_POP(amount) FROM sales;",
+        "SELECT client_name, SUM(amount) AS total\n"
+        "FROM sales\n"
+        "GROUP BY client_name;",
+        "SELECT COALESCE(bonus, 0) FROM employees;",
+        "SELECT CAST(amount AS INTEGER) FROM sales;",
+        # window_functions
+        "SELECT client_name, amount,\n"
+        "    ROW_NUMBER() OVER (ORDER BY amount DESC) AS rang\n"
+        "FROM sales;",
+        "SELECT client_name, amount,\n"
+        "    RANK() OVER (ORDER BY amount DESC) AS rang\n"
+        "FROM sales;",
+        "SELECT client_name, amount,\n"
+        "    DENSE_RANK() OVER (ORDER BY amount DESC) AS rang\n"
+        "FROM sales;",
+        "SELECT client_name, amount,\n"
+        "    LAG(amount) OVER (ORDER BY amount) AS montant_precedent\n"
+        "FROM sales;",
+        "SELECT client_name, amount,\n"
+        "    LEAD(amount) OVER (ORDER BY amount) AS montant_suivant\n"
+        "FROM sales;",
+        "SELECT client_name, amount,\n"
+        "    SUM(amount) OVER (PARTITION BY client_name) AS total_client\n"
+        "FROM sales;",
+        # cte
+        "WITH gros_clients AS (\n"
+        "    SELECT client_name, SUM(amount) AS total\n"
+        "    FROM sales\n"
+        "    GROUP BY client_name\n"
+        ")\n"
+        "SELECT * FROM gros_clients\n"
+        "WHERE total > 100;",
+        # joins
+        "SELECT * FROM orders\n"
+        "INNER JOIN customers USING (customer_id);",
+        "SELECT * FROM customers\n"
+        "LEFT JOIN orders USING (customer_id);",
+        "SELECT * FROM orders\n"
+        "FULL OUTER JOIN customers USING (customer_id);",
+        "SELECT * FROM sizes\n"
+        "CROSS JOIN trademarks;",
+        "SELECT e.name AS employe, m.name AS manager\n"
+        "FROM employees e\n"
+        "JOIN employees m ON e.manager_id = m.id;",
+        # null_filtering
+        "SELECT client_name, SUM(amount) AS total\n"
+        "FROM sales\n"
+        "WHERE amount > 0\n"
+        "GROUP BY client_name\n"
+        "HAVING SUM(amount) > 100;",
+        "SELECT NULLIF(bonus, 0) FROM employees;",
+        "SELECT * FROM employees WHERE bonus IS NULL;",
+        # aggregates
+        "SELECT COUNT(*), COUNT(bonus) FROM employees;",
+        "SELECT DISTINCT client_name FROM sales;",
+        # sets
+        "SELECT client_name FROM sales_2024\n"
+        "UNION\n"
+        "SELECT client_name FROM sales_2025;",
+        # dates
+        "SELECT CURRENT_DATE;",
+        "SELECT EXTRACT(YEAR FROM order_date) FROM orders;",
+        "SELECT delivery_date - order_date AS jours_livraison FROM orders;",
+        "SELECT order_date + INTERVAL '7 days' FROM orders;",
+        "SELECT DATE_TRUNC('month', order_date) FROM orders;",
+        # strings
+        "SELECT first_name || ' ' || last_name FROM clients;",
+        "SELECT SUBSTRING(client_name, 1, 3) FROM sales;",
+        "SELECT UPPER(client_name), LOWER(client_name) FROM sales;",
+        "SELECT TRIM('  Oussama  ');",
+        "SELECT LENGTH(client_name) FROM sales;",
+        "SELECT * FROM sales WHERE client_name LIKE 'J%';",
+    ],
     "last_reviewed": ["1970-01-01"] * 35,
     "interval_step": [0] * 35,
 }
 flashcards_df = pd.DataFrame(flashcards_data)
 con.execute("CREATE TABLE IF NOT EXISTS flashcards AS SELECT * FROM flashcards_df")
+
+# Rétrocompatibilité : la colonne "example" a été ajoutée après coup, une
+# base créée avant n'a pas cette colonne (CREATE TABLE IF NOT EXISTS ne
+# modifie pas un schéma déjà existant).
+con.execute("ALTER TABLE flashcards ADD COLUMN IF NOT EXISTS example VARCHAR")
 
 # Même logique que pour memory_state : on n'ajoute que les cartes absentes,
 # pour ne pas écraser la progression de révision des cartes déjà en place.
@@ -562,6 +647,19 @@ con.execute("""
     WHERE NOT EXISTS (
         SELECT 1 FROM flashcards m WHERE m.card_name = n.card_name
     )
+""")
+
+# Le contenu pédagogique (question/answer/example) peut évoluer pour une
+# carte déjà existante : on le rafraîchit systématiquement, contrairement à
+# last_reviewed/interval_step (progression de révision) qui ne sont jamais
+# touchés une fois la carte créée.
+con.execute("""
+    UPDATE flashcards
+    SET question = flashcards_df.question,
+        answer = flashcards_df.answer,
+        example = flashcards_df.example
+    FROM flashcards_df
+    WHERE flashcards.card_name = flashcards_df.card_name
 """)
 
 con.close()
