@@ -1,8 +1,10 @@
 # pylint: disable=missing-module-docstring
 
-import os
+import itertools
 import logging
+import os
 import random
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 
 import duckdb
@@ -34,54 +36,108 @@ REVIEW_INTERVALS = [2, 7, 21]  # jours, du plus court au plus long
 def _normalize_value(v):
     """1 et 1.0 doivent être considérés comme égaux : on normalise les
     nombres flottants entiers vers leur écriture entière avant comparaison."""
+    if v is None or (pd.api.types.is_scalar(v) and pd.isna(v)):
+        return "NULL"
     if isinstance(v, (float, np.floating)):
-        if pd.isna(v):
-            return "NaN"
         if float(v).is_integer():
             return str(int(v))
         return repr(round(float(v), 9))
-    if v is None:
-        return "NaN"
     return str(v)
 
 
-def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Rend deux résultats comparables : ordre des colonnes et des lignes
-    indifférent, valeurs normalisées pour ignorer les différences de type
-    (int vs float, etc.)."""
-    df = df[sorted(df.columns)].map(_normalize_value)
-    return df.sort_values(by=list(df.columns)).reset_index(drop=True)
+# Garde-fou : nombre max de permutations testées quand plusieurs colonnes
+# ont exactement les mêmes valeurs (cas rare, mais combinatoire).
+MAX_COLUMN_PERMUTATIONS = 5000
 
 
-def dataframes_match(df1: pd.DataFrame, df2: pd.DataFrame) -> bool:
-    """Compare deux résultats de requête : mêmes colonnes et mêmes valeurs,
-    peu importe l'ordre des colonnes ou des lignes."""
-    if set(df1.columns) != set(df2.columns):
+def dataframes_match(user_df: pd.DataFrame, solution_df: pd.DataFrame) -> bool:
+    """Compare deux résultats de requête sur leurs VALEURS uniquement :
+    - noms de colonnes ignorés (un alias différent reste une bonne réponse) ;
+    - ordre des colonnes et des lignes indifférent ;
+    - int vs float (1 vs 1.0) indifférent.
+
+    Les colonnes sont appariées par leur contenu (multiset de valeurs), puis
+    les lignes sont comparées en multiset. Si plusieurs colonnes ont le même
+    contenu, on essaie les appariements possibles entre elles."""
+    if user_df.shape != solution_df.shape:
         return False
-    return _normalize_df(df1).equals(_normalize_df(df2))
+
+    # Colonnes renommées en positions : évite les soucis de noms dupliqués
+    # (ex : SELECT * avec JOIN ... ON qui renvoie order_id et order_id_1).
+    user = user_df.map(_normalize_value)
+    solution = solution_df.map(_normalize_value)
+    user.columns = range(user.shape[1])
+    solution.columns = range(solution.shape[1])
+
+    def signature(col: pd.Series) -> tuple:
+        return tuple(sorted(col))
+
+    user_groups: dict = defaultdict(list)
+    for c in user.columns:
+        user_groups[signature(user[c])].append(c)
+    solution_groups: dict = defaultdict(list)
+    for c in solution.columns:
+        solution_groups[signature(solution[c])].append(c)
+
+    if {k: len(v) for k, v in user_groups.items()} != {
+        k: len(v) for k, v in solution_groups.items()
+    }:
+        return False
+
+    solution_rows = Counter(map(tuple, solution.to_numpy().tolist()))
+    sigs = list(solution_groups)
+    candidate_orders = itertools.product(
+        *(itertools.permutations(user_groups[s]) for s in sigs)
+    )
+    for combo in itertools.islice(candidate_orders, MAX_COLUMN_PERMUTATIONS):
+        mapping = {}
+        for s, user_cols in zip(sigs, combo):
+            mapping.update(zip(solution_groups[s], user_cols))
+        reordered = user[[mapping[c] for c in solution.columns]]
+        if Counter(map(tuple, reordered.to_numpy().tolist())) == solution_rows:
+            return True
+    return False
 
 
-def run_check(query_text: str) -> None:
+def run_check(text_key: str, solution_df: pd.DataFrame) -> None:
     """Exécute la requête et range le verdict dans session_state, sans
     appeler directement st.write/st.dataframe/... : cette fonction sert
-    aussi de callback on_change du text_area (Ctrl+Entrée), et Streamlit
-    déconseille d'afficher des éléments depuis un callback."""
-    if not query_text:
+    de callback (Ctrl+Entrée et bouton Valider), et Streamlit déconseille
+    d'afficher des éléments depuis un callback."""
+    query_text = st.session_state.get(text_key, "")
+    if not query_text.strip():
         st.session_state["check_result"] = {"status": "empty"}
         return
 
     try:
+        # La connexion est en lecture/écriture (progression de révision) :
+        # on n'accepte qu'UNE instruction de type SELECT (CTE incluses),
+        # sinon un DROP/DELETE/UPDATE tapé dans la zone de texte
+        # modifierait réellement la base.
+        statements = con.extract_statements(query_text)
+        if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
+            st.session_state["check_result"] = {
+                "status": "error",
+                "message": "Seule une requête SELECT (une seule instruction, "
+                "CTE autorisées) est acceptée.",
+            }
+            st.session_state["last_check_correct"] = False
+            return
         result = con.execute(query_text).df()
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         st.session_state["check_result"] = {"status": "error", "message": str(e)}
         st.session_state["last_check_correct"] = False
         return
 
     correct = dataframes_match(result, solution_df)
+    renamed = correct and sorted(map(str, result.columns)) != sorted(
+        map(str, solution_df.columns)
+    )
     st.session_state["check_result"] = {
         "status": "ok",
         "result": result,
         "correct": correct,
+        "renamed": renamed,
     }
     st.session_state["last_check_correct"] = correct
 
@@ -192,11 +248,16 @@ if app_mode == "Exercices SQL":
         )
 
         if theme:
-            exercise = con.execute(f"SELECT * FROM memory_state WHERE theme = '{theme}'").df().sort_values("last_reviewed").reset_index()
+            exercise = (
+                con.execute("SELECT * FROM memory_state WHERE theme = ?", [theme])
+                .df()
+                .sort_values("last_reviewed")
+                .reset_index(drop=True)
+            )
             exercise_name = exercise.loc[0, "exercise_name"]
             st.caption(f"Exercice : {exercise_name.replace('_', ' ').title()}")
 
-            with open(f"answers/{exercise_name}.sql", "r") as f:
+            with open(f"answers/{exercise_name}.sql", "r", encoding="utf-8") as f:
                 answer = f.read()
 
             solution_df = con.execute(answer).df()
@@ -221,14 +282,19 @@ if app_mode == "Exercices SQL":
         # comme un widget neuf à chaque changement d'exercice, donc vide par
         # défaut — plus fiable qu'essayer d'effacer une clé fixe après coup.
         text_key = f"user_input_{exercise_name}"
-        query = st.text_area(
+        st.text_area(
             label="Votre code SQL ici (Ctrl+Entrée pour valider)",
             key=text_key,
-            on_change=lambda: run_check(st.session_state[text_key]),
+            on_change=run_check,
+            args=(text_key, solution_df),
         )
 
-        if st.button("Valider", type="primary"):
-            run_check(query)
+        st.button(
+            "Valider",
+            type="primary",
+            on_click=run_check,
+            args=(text_key, solution_df),
+        )
 
         check_result = st.session_state.get("check_result")
         if check_result:
@@ -240,6 +306,11 @@ if app_mode == "Exercices SQL":
                 st.dataframe(check_result["result"])
                 if check_result["correct"]:
                     st.success("✅ Bonne réponse !")
+                    if check_result.get("renamed"):
+                        st.caption(
+                            "ℹ️ Les noms de colonnes diffèrent de la solution "
+                            "(alias) — accepté, seules les valeurs comptent."
+                        )
                 else:
                     st.error("❌ Ce n'est pas (encore) la bonne réponse.")
 
