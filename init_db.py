@@ -21,6 +21,11 @@ data = {
         "self_joins", "self_joins",
         "cte", "cte", "cte", "cte",
         "crud", "crud", "crud", "crud",
+        # Niveau 3 : HAVING / COUNT(DISTINCT), CASE WHEN, GROUPING SETS
+        "aggregation", "aggregation", "aggregation",
+        "case_when", "case_when", "case_when", "case_when",
+        "grouping_sets", "grouping_sets", "grouping_sets",
+        "grouping_sets", "grouping_sets",
     ],
     "exercise_name": [
         "beverages_and_food",
@@ -50,6 +55,18 @@ data = {
         "raise_expensive_products_price",
         "delete_customers_without_orders",
         "archive_big_sales",
+        "departments_payroll_above_300k",
+        "lines_and_distinct_products_per_store",
+        "departments_headcount_above_wage_floor",
+        "wage_bands",
+        "headcount_per_wage_band",
+        "revenue_per_product_with_discounts",
+        "orders_by_discount_status",
+        "product_totals_with_grand_total",
+        "regional_average_population_subtotals",
+        "department_population_2021_rollup",
+        "store_product_cube",
+        "quantity_per_discount_code_with_total",
     ],
     "statement": [
         "Associe chaque boisson à chaque plat pour générer toutes les combinaisons "
@@ -138,6 +155,60 @@ data = {
         "de sales d'un montant supérieur ou égal à 60, en une seule "
         "requête INSERT ... SELECT. (Le résultat comparé est la table "
         "sales_archive après ta requête.)",
+        # aggregation (niveau 3) : HAVING, COUNT(DISTINCT)
+        "Retrouve les départements de wages dont la masse salariale "
+        "(somme des salaires) dépasse 300 000. Affiche le département et "
+        "sa masse salariale. Une seule requête, sans CTE.",
+        "Pour chaque magasin de store_sales, affiche le nombre de lignes "
+        "de vente et le nombre de produits différents vendus. Attention : "
+        "un même produit peut apparaître sur plusieurs lignes d'un "
+        "magasin.",
+        "En ne comptant que les salariés payés au moins 65 000, retrouve "
+        "les départements qui en ont au moins 4. Affiche le département, "
+        "ce nombre de salariés et leur salaire moyen.",
+        # case_when
+        "Classe chaque salarié de wages dans une tranche : 'Junior' en "
+        "dessous de 70 000, 'Confirmed' de 70 000 à moins de 90 000, "
+        "'Senior' à partir de 90 000. Affiche name, wage et la tranche.",
+        "Avec les mêmes tranches ('Junior' < 70 000, 'Confirmed' < 90 000, "
+        "'Senior' au-delà), affiche pour chaque tranche le nombre de "
+        "salariés et la masse salariale. Calcule la tranche dans une CTE.",
+        "Calcule le chiffre d'affaires net par product_id dans "
+        "orders_discounts : quantity × price_per_unit, avec -10 % pour le "
+        "code 'DISCOUNT10', -20 % pour 'DISCOUNT20', et aucune remise pour "
+        "les autres codes ou sans code. Calcule le CA de chaque commande "
+        "dans une CTE.",
+        "Classe chaque commande de orders_discounts selon son code : "
+        "'no_code' si elle n'a pas de code, 'valid_code' pour 'DISCOUNT10' "
+        "ou 'DISCOUNT20', 'invalid_code' sinon. Pour chaque statut, affiche "
+        "le nombre de commandes et le CA brut (quantity × price_per_unit, "
+        "sans remise).",
+        # grouping_sets
+        "Affiche le montant total vendu par produit dans store_sales "
+        "(tous magasins confondus), plus une ligne de total général "
+        "(product_name à NULL). Une seule requête GROUP BY, sans UNION.",
+        "Dans regional_population, affiche la population de chaque région "
+        "pour chaque année, plus, pour chaque région, une ligne de "
+        "sous-total (year à NULL) qui donne sa population MOYENNE sur la "
+        "période. Colonnes : region, year, population moyenne. Une seule "
+        "requête GROUP BY.",
+        "Pour l'année 2021 uniquement, affiche à partir de "
+        "department_population la population de chaque département, le "
+        "sous-total de chaque région (department à NULL) et le total "
+        "national (region et department à NULL). Colonnes : region, "
+        "department, population. Les dimensions sont hiérarchiques : "
+        "choisis l'opérateur adapté.",
+        "Dans store_sales, magasin et produit sont deux axes indépendants. "
+        "Affiche le montant total pour chaque combinaison magasin × "
+        "produit, pour chaque magasin, pour chaque produit, et le total "
+        "général. Colonnes : store_id, product_name, montant total.",
+        "Affiche la quantité totale commandée par discount_code dans "
+        "orders_discounts, plus une ligne de total. Problème : les "
+        "commandes sans code et la ligne de total auraient toutes les deux "
+        "un discount_code NULL. Distingue-les avec la fonction GROUPING() : "
+        "libellé 'NO_CODE' pour les commandes sans code, 'TOTAL' pour la "
+        "ligne de total, le code lui-même sinon. Colonnes : libellé, "
+        "quantité totale.",
     ],
     "tables": [
         ["beverages", "food_items"],
@@ -169,6 +240,21 @@ data = {
         ["products"],
         ["customers", "orders"],
         ["sales_archive", "sales"],
+        # aggregation (niveau 3)
+        ["wages"],
+        ["store_sales"],
+        ["wages"],
+        # case_when
+        ["wages"],
+        ["wages"],
+        ["orders_discounts"],
+        ["orders_discounts"],
+        # grouping_sets
+        ["store_sales"],
+        ["regional_population"],
+        ["department_population"],
+        ["store_sales"],
+        ["orders_discounts"],
     ],
 }
 nb_exercises = len(data["exercise_name"])
@@ -451,6 +537,95 @@ con.execute("""
 """)
 
 # ----------------------------------------
+# LEVEL 3 : HAVING, COUNT(DISTINCT), CASE WHEN, GROUPING SETS / ROLLUP / CUBE
+# ----------------------------------------
+# Datasets du cours Data Upskilling (noms traduits en anglais). Les
+# exercices en sont des variantes, pas les questions du cours.
+
+# store_sales (cours : df "redbull"). Armentieres a DEUX lignes redbull à 45 :
+# piège COUNT(*) vs COUNT(DISTINCT product_name).
+con.execute("""
+    CREATE TABLE IF NOT EXISTS store_sales AS
+    SELECT * FROM (VALUES
+        ('Armentieres', 'redbull', 45), ('Armentieres', 'chips', 60),
+        ('Armentieres', 'wine', 60), ('Armentieres', 'redbull', 45),
+        ('Lille', 'redbull', 100), ('Lille', 'chips', 140),
+        ('Lille', 'wine', 190), ('Lille', 'icecream', 170),
+        ('Douai', 'redbull', 55), ('Douai', 'chips', 70),
+        ('Douai', 'wine', 20), ('Douai', 'icecream', 45)
+    ) AS t(store_id, product_name, amount)
+""")
+
+# wages (cours : wages). Aucune égalité de salaire.
+con.execute("""
+    CREATE TABLE IF NOT EXISTS wages AS
+    SELECT * FROM (VALUES
+        ('Toufik', 60000, 'IT'), ('Jean-Nicolas', 75000, 'HR'),
+        ('Daniel', 55000, 'SALES'), ('Kaouter', 80000, 'IT'),
+        ('Sylvie', 70000, 'IT'), ('Sebastien', 90000, 'HR'),
+        ('Diane', 65000, 'SALES'), ('Romain', 72000, 'IT'),
+        ('Francois', 68000, 'HR'), ('Anna', 85000, 'SALES'),
+        ('Zeinaba', 100000, 'IT'), ('Gregory', 120000, 'IT'),
+        ('Karima', 95000, 'HR'), ('Arthur', 83000, 'SALES'),
+        ('Benjamin', 110000, 'CEO')
+    ) AS t(name, wage, department)
+""")
+
+# orders_discounts (cours : codes de réduction). discount_code NULL = pas de
+# code ; 'UNKNOWN' = code invalide (aucune remise).
+con.execute("""
+    CREATE TABLE IF NOT EXISTS orders_discounts (
+        order_id INTEGER,
+        product_id INTEGER,
+        quantity INTEGER,
+        price_per_unit DOUBLE,
+        discount_code VARCHAR
+    )
+""")
+con.execute("""
+    INSERT INTO orders_discounts
+    SELECT * FROM (VALUES
+        (1, 101, 5, 10.0, NULL), (2, 102, 3, 25.0, 'DISCOUNT10'),
+        (3, 101, 2, 10.0, 'DISCOUNT20'), (4, 103, 4, 8.0, NULL),
+        (5, 102, 6, 25.0, NULL), (6, 103, 2, 8.0, 'UNKNOWN')
+    ) AS t(order_id, product_id, quantity, price_per_unit, discount_code)
+    WHERE NOT EXISTS (SELECT 1 FROM orders_discounts)
+""")
+
+# regional_population (cours : dfpop).
+con.execute("""
+    CREATE TABLE IF NOT EXISTS regional_population AS
+    SELECT * FROM (VALUES
+        (2016, 'IDF', 1010000), (2017, 'IDF', 1020000), (2018, 'IDF', 1030000),
+        (2019, 'IDF', 1040000), (2020, 'IDF', 1000000),
+        (2016, 'HDF', 910000), (2017, 'HDF', 920000), (2018, 'HDF', 930000),
+        (2019, 'HDF', 940000), (2020, 'HDF', 900000),
+        (2016, 'PACA', 810000), (2017, 'PACA', 820000), (2018, 'PACA', 830000),
+        (2019, 'PACA', 840000), (2020, 'PACA', 950000)
+    ) AS t(year, region, population)
+""")
+
+# department_population (cours : dpts_dfs). 2016 = valeurs du cours ;
+# 2017-2021 = synthétique (+0,3 %/an, arrondi), pour avoir plusieurs années.
+department_population_2016 = [
+    ("HDF", "59", 2603723), ("HDF", "62", 1470725),
+    ("IDF", "75", 2190327), ("IDF", "95", 1221923),
+    ("PACA", "83", 1055821), ("PACA", "84", 559014),
+]
+department_population = pd.DataFrame(
+    [
+        (year, region, department, round(population_2016 * (1 + 0.003 * (year - 2016))))
+        for year in range(2016, 2022)
+        for region, department, population_2016 in department_population_2016
+    ],
+    columns=["year", "region", "department", "population"],
+)
+con.execute(
+    "CREATE TABLE IF NOT EXISTS department_population AS "
+    "SELECT * FROM department_population"
+)
+
+# ----------------------------------------
 # FLASHCARDS (memocards) - fonctions SQL a retenir
 # ----------------------------------------
 # Contrairement aux exercices ci-dessus (requête à écrire, comparée à une
@@ -470,11 +645,13 @@ flashcards_data = {
         + ["cte"] * 2
         + ["joins"] * 6
         + ["null_filtering"] * 4
-        + ["aggregates"] * 2
+        + ["aggregates"] * 3
         + ["sets"] * 1
         + ["dates"] * 5
         + ["strings"] * 6
         + ["crud"] * 4
+        + ["case_when"] * 2
+        + ["grouping_sets"] * 4
     ),
     "card_name": [
         # stats
@@ -509,6 +686,7 @@ flashcards_data = {
         # aggregates
         "count_star_vs_column",
         "distinct",
+        "count_distinct",
         # sets
         "union_vs_union_all",
         # dates
@@ -529,6 +707,14 @@ flashcards_data = {
         "insert_select",
         "update_set",
         "delete_where",
+        # case_when
+        "case_when_syntax",
+        "case_when_null",
+        # grouping_sets
+        "grouping_sets",
+        "rollup",
+        "cube",
+        "grouping_function",
     ],
     "question": [
         # stats
@@ -579,6 +765,8 @@ flashcards_data = {
         # aggregates
         "Quelle est la différence entre COUNT(*) et COUNT(colonne) ?",
         "Comment éliminer les doublons dans un résultat ?",
+        "Comment compter le nombre de valeurs différentes d'une colonne "
+        "(par groupe) ?",
         # sets
         "Quelle est la différence entre UNION et UNION ALL ?",
         # dates
@@ -602,6 +790,21 @@ flashcards_data = {
         "Comment insérer dans une table le résultat d'une requête ?",
         "Comment modifier des lignes existantes ?",
         "Comment supprimer des lignes ?",
+        # case_when
+        "Comment créer une colonne dont la valeur dépend de conditions "
+        "(équivalent d'un if / elif / else) ?",
+        "Pourquoi CASE WHEN colonne = NULL ne marche jamais, et que renvoie "
+        "un CASE sans ELSE quand aucune condition n'est vraie ?",
+        # grouping_sets
+        "Comment calculer en une seule requête plusieurs niveaux "
+        "d'agrégation choisis (ex : détail magasin × produit + sous-total "
+        "par magasin) ?",
+        "Quel opérateur calcule les sous-totaux d'une hiérarchie (année > "
+        "région > département) plus le total général ?",
+        "Quel opérateur calcule les agrégats pour TOUTES les combinaisons "
+        "de colonnes (axes indépendants) ?",
+        "Comment distinguer, dans un ROLLUP / GROUPING SETS, un NULL de "
+        "sous-total d'un vrai NULL présent dans les données ?",
     ],
     "answer": [
         # stats
@@ -642,6 +845,7 @@ flashcards_data = {
         "COUNT(*) compte toutes les lignes, COUNT(colonne) ignore les "
         "NULL de cette colonne",
         "SELECT DISTINCT colonne",
+        "COUNT(DISTINCT colonne)  -- ignore aussi les NULL",
         # sets
         "UNION déduplique les résultats (donc plus lent), UNION ALL "
         "garde tous les doublons",
@@ -671,6 +875,22 @@ flashcards_data = {
         "UPDATE table SET colonne = valeur WHERE ...  -- sans WHERE, "
         "TOUTES les lignes sont modifiées",
         "DELETE FROM table WHERE ...  -- sans WHERE, la table est vidée",
+        # case_when
+        "CASE WHEN condition1 THEN valeur1 WHEN condition2 THEN valeur2 "
+        "ELSE valeur_par_defaut END  -- conditions testées dans l'ordre, la "
+        "première vraie gagne",
+        "NULL n'est égal à rien : écrire CASE WHEN colonne IS NULL. Sans "
+        "ELSE, le CASE renvoie NULL (ignoré par SUM, mais qui change AVG "
+        "et COUNT(colonne))",
+        # grouping_sets
+        "GROUP BY GROUPING SETS ((a, b), (a))  -- ajouter () pour le total "
+        "général ; les colonnes non groupées valent NULL",
+        "GROUP BY ROLLUP (a, b, c)  -- = GROUPING SETS ((a, b, c), (a, b), "
+        "(a), ())",
+        "GROUP BY CUBE (a, b)  -- = GROUPING SETS ((a, b), (a), (b), ()), "
+        "2^n groupements",
+        "GROUPING(colonne)  -- 1 si la colonne est agrégée (NULL de "
+        "sous-total), 0 sinon",
     ],
     "example": [
         # stats
@@ -751,6 +971,9 @@ flashcards_data = {
         # aggregates
         "SELECT COUNT(*), COUNT(bonus) FROM employees;",
         "SELECT DISTINCT client_name FROM sales;",
+        "SELECT store_id, COUNT(DISTINCT product_name) AS nb_products\n"
+        "FROM store_sales\n"
+        "GROUP BY store_id;",
         # sets
         "SELECT client_name FROM sales_2024\n"
         "UNION\n"
@@ -778,6 +1001,36 @@ flashcards_data = {
         "WHERE product_price > 100;",
         "DELETE FROM customers\n"
         "WHERE customer_id = 106;",
+        # case_when
+        "SELECT name, wage,\n"
+        "    CASE\n"
+        "        WHEN wage < 70000 THEN 'Junior'\n"
+        "        WHEN wage < 90000 THEN 'Confirmed'\n"
+        "        ELSE 'Senior'\n"
+        "    END AS wage_band\n"
+        "FROM wages;",
+        "SELECT order_id,\n"
+        "    CASE\n"
+        "        WHEN discount_code IS NULL THEN 'no_code'\n"
+        "        ELSE discount_code\n"
+        "    END AS code_label\n"
+        "FROM orders_discounts;",
+        # grouping_sets
+        "SELECT store_id, product_name, SUM(amount)\n"
+        "FROM store_sales\n"
+        "GROUP BY GROUPING SETS ((store_id, product_name), (store_id));",
+        "SELECT year, region, department, SUM(population)\n"
+        "FROM department_population\n"
+        "GROUP BY ROLLUP (year, region, department);",
+        "SELECT store_id, product_name, SUM(amount)\n"
+        "FROM store_sales\n"
+        "GROUP BY CUBE (store_id, product_name);",
+        "SELECT\n"
+        "    CASE WHEN GROUPING(discount_code) = 1 THEN 'TOTAL'\n"
+        "         ELSE discount_code END AS label,\n"
+        "    SUM(quantity)\n"
+        "FROM orders_discounts\n"
+        "GROUP BY ROLLUP (discount_code);",
     ],
 }
 flashcards_data["last_reviewed"] = ["1970-01-01"] * len(flashcards_data["card_name"])
