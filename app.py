@@ -32,10 +32,10 @@ con = get_connection()
 
 REVIEW_INTERVALS = [2, 7, 21]  # jours, du plus court au plus long
 
-# Thèmes d'exercices par niveau de maîtrise SQL (cf. doc du projet), dans
-# l'ordre d'affichage de la barre latérale. Un thème absent de ce
-# dictionnaire est affiché dans un groupe "Autres", à la fin.
-THEME_LEVELS = {
+# Thèmes par niveau de maîtrise SQL (cf. doc du projet), dans l'ordre
+# d'affichage de la barre latérale. Un thème absent de ces dictionnaires
+# est affiché dans un groupe "Autres", à la fin.
+EXERCISE_THEME_LEVELS = {
     "Niveau 2 · Joins, CTE, CRUD": [
         "cross_joins", "inner_joins", "left_joins", "outer_join",
         "self_joins", "cte", "crud",
@@ -49,6 +49,18 @@ THEME_LEVELS = {
     "Niveau 5 · Window functions": [
         "window_functions", "ranking", "lag_lead",
     ],
+}
+
+FLASHCARD_THEME_LEVELS = {
+    "Niveau 1 · Fondamentaux": ["null_filtering", "strings", "sets"],
+    "Niveau 2 · Joins, CTE, CRUD": ["joins", "cte", "crud"],
+    "Niveau 3 · Agrégations, CASE WHEN, GROUPING SETS": [
+        "aggregates", "stats", "case_when", "grouping_sets",
+    ],
+    "Niveau 4 · Agrégations conditionnelles, dates": [
+        "conditional_aggregation", "dates",
+    ],
+    "Niveau 5 · Window functions": ["window_functions"],
 }
 
 
@@ -262,9 +274,53 @@ def scroll_to_top() -> None:
     )
 
 
-def select_theme(theme_name: str) -> None:
+def select_theme(state_key: str, theme_name: str) -> None:
     """Callback (on_click) d'un bouton de thème dans la barre latérale."""
-    st.session_state["selected_theme"] = theme_name
+    st.session_state[state_key] = theme_name
+
+
+def theme_menu(
+    themes: list,
+    theme_levels: dict,
+    state_key: str,
+    counts: dict | None = None,
+) -> str | None:
+    """Affiche les thèmes dans la barre latérale, regroupés par niveau
+    (séparateur + titre de niveau), et renvoie le thème sélectionné.
+
+    Un st.radio ne permet pas d'insérer des séparateurs entre ses options :
+    chaque thème est donc un bouton, et le thème choisi est gardé dans
+    session_state[state_key] (clé non liée à un widget). counts (facultatif)
+    ajoute un compteur au label : contrairement au format_func d'un radio,
+    un label de bouton n'a pas de valeur persistée à perdre."""
+    grouped_themes = [
+        (level, [t for t in level_themes if t in themes])
+        for level, level_themes in theme_levels.items()
+    ]
+    known_themes = {t for _, level_themes in grouped_themes for t in level_themes}
+    other_themes = [t for t in themes if t not in known_themes]
+    if other_themes:
+        grouped_themes.append(("Autres", other_themes))
+
+    for level, level_themes in grouped_themes:
+        if not level_themes:
+            continue
+        st.divider()
+        st.caption(level)
+        for t in level_themes:
+            label = t.replace("_", " ").title()
+            count = (counts or {}).get(t, 0)
+            st.button(
+                f"{label} ({count})" if count else label,
+                key=f"{state_key}_button_{t}",
+                type="primary" if st.session_state.get(state_key) == t else "tertiary",
+                width="stretch",
+                on_click=select_theme,
+                args=(state_key, t),
+            )
+
+    selected = st.session_state.get(state_key)
+    return selected if selected in themes else None
 
 
 def reveal_flashcard_answer() -> None:
@@ -300,45 +356,13 @@ if app_mode == "Exercices SQL":
         due_by_theme = dict(zip(theme_counts_df["theme"], theme_counts_df["due"].astype(int)))
         st.metric("À réviser aujourd'hui", sum(due_by_theme.values()))
 
-        # Thèmes regroupés par niveau (ordre pédagogique). Un st.radio ne
-        # permet pas d'insérer des séparateurs entre ses options : chaque
-        # thème est donc un bouton, et le thème choisi est gardé dans
-        # session_state (clé non liée à un widget). Le compteur "à réviser"
-        # peut figurer dans le label : contrairement au format_func d'un
-        # radio, un label de bouton n'a pas de valeur persistée à perdre.
-        db_themes = theme_counts_df["theme"].tolist()
-        grouped_themes = [
-            (level, [t for t in level_themes if t in db_themes])
-            for level, level_themes in THEME_LEVELS.items()
-        ]
-        known_themes = {t for _, level_themes in grouped_themes for t in level_themes}
-        other_themes = [t for t in db_themes if t not in known_themes]
-        if other_themes:
-            grouped_themes.append(("Autres", other_themes))
-
         st.markdown("**Que voulez-vous revoir ?**")
-        for level, level_themes in grouped_themes:
-            if not level_themes:
-                continue
-            st.divider()
-            st.caption(level)
-            for t in level_themes:
-                due = due_by_theme.get(t, 0)
-                label = t.replace("_", " ").title()
-                st.button(
-                    f"{label} ({due})" if due else label,
-                    key=f"theme_button_{t}",
-                    type="primary"
-                    if st.session_state.get("selected_theme") == t
-                    else "tertiary",
-                    width="stretch",
-                    on_click=select_theme,
-                    args=(t,),
-                )
-
-        theme = st.session_state.get("selected_theme")
-        if theme not in db_themes:
-            theme = None
+        theme = theme_menu(
+            theme_counts_df["theme"].tolist(),
+            EXERCISE_THEME_LEVELS,
+            "selected_theme",
+            counts=due_by_theme,
+        )
 
         if theme:
             exercise = (
@@ -477,15 +501,15 @@ else:
             "SELECT DISTINCT theme FROM flashcards ORDER BY theme"
         ).df()["theme"].tolist()
 
-        flashcard_theme = st.radio(
-            "Thème à réviser ?",
-            flashcard_themes,
-            index=0 if flashcard_themes else None,
-            key="selected_flashcard_theme",
+        st.markdown("**Thème à réviser ?**")
+        flashcard_theme = theme_menu(
+            flashcard_themes, FLASHCARD_THEME_LEVELS, "selected_flashcard_theme"
         )
 
-    if not flashcard_theme:
+    if not flashcard_themes:
         st.info("Aucune mémocard disponible pour l'instant.")
+    elif not flashcard_theme:
+        st.info("Sélectionnez un thème dans la barre à gauche")
     else:
         flashcards_df = con.execute(
             "SELECT * FROM flashcards WHERE theme = ? ORDER BY card_name",
