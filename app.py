@@ -32,6 +32,25 @@ con = get_connection()
 
 REVIEW_INTERVALS = [2, 7, 21]  # jours, du plus court au plus long
 
+# Thèmes d'exercices par niveau de maîtrise SQL (cf. doc du projet), dans
+# l'ordre d'affichage de la barre latérale. Un thème absent de ce
+# dictionnaire est affiché dans un groupe "Autres", à la fin.
+THEME_LEVELS = {
+    "Niveau 2 · Joins, CTE, CRUD": [
+        "cross_joins", "inner_joins", "left_joins", "outer_join",
+        "self_joins", "cte", "crud",
+    ],
+    "Niveau 3 · Agrégations, CASE WHEN, GROUPING SETS": [
+        "aggregation", "case_when", "grouping_sets",
+    ],
+    "Niveau 4 · Agrégations conditionnelles, dates": [
+        "conditional_aggregation", "dates",
+    ],
+    "Niveau 5 · Window functions": [
+        "window_functions", "ranking", "lag_lead",
+    ],
+}
+
 
 def _normalize_value(v):
     """1 et 1.0 doivent être considérés comme égaux : on normalise les
@@ -243,6 +262,11 @@ def scroll_to_top() -> None:
     )
 
 
+def select_theme(theme_name: str) -> None:
+    """Callback (on_click) d'un bouton de thème dans la barre latérale."""
+    st.session_state["selected_theme"] = theme_name
+
+
 def reveal_flashcard_answer() -> None:
     """Callback (on_click) du bouton Afficher la réponse."""
     st.session_state["flashcard_revealed"] = True
@@ -276,27 +300,45 @@ if app_mode == "Exercices SQL":
         due_by_theme = dict(zip(theme_counts_df["theme"], theme_counts_df["due"].astype(int)))
         st.metric("À réviser aujourd'hui", sum(due_by_theme.values()))
 
-        themes = theme_counts_df["theme"].tolist()
+        # Thèmes regroupés par niveau (ordre pédagogique). Un st.radio ne
+        # permet pas d'insérer des séparateurs entre ses options : chaque
+        # thème est donc un bouton, et le thème choisi est gardé dans
+        # session_state (clé non liée à un widget). Le compteur "à réviser"
+        # peut figurer dans le label : contrairement au format_func d'un
+        # radio, un label de bouton n'a pas de valeur persistée à perdre.
+        db_themes = theme_counts_df["theme"].tolist()
+        grouped_themes = [
+            (level, [t for t in level_themes if t in db_themes])
+            for level, level_themes in THEME_LEVELS.items()
+        ]
+        known_themes = {t for _, level_themes in grouped_themes for t in level_themes}
+        other_themes = [t for t in db_themes if t not in known_themes]
+        if other_themes:
+            grouped_themes.append(("Autres", other_themes))
 
-        # Détail par thème affiché à part (et non dans le label des options du
-        # radio) : un format_func dont le texte change d'un rerun à l'autre (ici,
-        # le nombre à réviser qui diminue au fil des validations) fait perdre à
-        # Streamlit la sélection du radio de façon aléatoire — st.session_state
-        # ["selected_theme"] se retrouve alors avec le texte affiché au lieu de
-        # la valeur choisie. Le format_func ci-dessous ne dépend que de `t`
-        # (texte fixe, ne change jamais d'un rerun à l'autre) : contrairement au
-        # compteur "à réviser", il ne recrée donc pas ce bug.
-        st.caption(
-            " · ".join(f"{t} : {due_by_theme.get(t, 0)} à réviser" for t in themes)
-        )
+        st.markdown("**Que voulez-vous revoir ?**")
+        for level, level_themes in grouped_themes:
+            if not level_themes:
+                continue
+            st.divider()
+            st.caption(level)
+            for t in level_themes:
+                due = due_by_theme.get(t, 0)
+                label = t.replace("_", " ").title()
+                st.button(
+                    f"{label} ({due})" if due else label,
+                    key=f"theme_button_{t}",
+                    type="primary"
+                    if st.session_state.get("selected_theme") == t
+                    else "tertiary",
+                    width="stretch",
+                    on_click=select_theme,
+                    args=(t,),
+                )
 
-        theme = st.radio(
-            "Que voulez-vous revoir ?",
-            themes,
-            index=None,
-            key="selected_theme",
-            format_func=lambda t: t.replace("_", " ").title(),
-        )
+        theme = st.session_state.get("selected_theme")
+        if theme not in db_themes:
+            theme = None
 
         if theme:
             exercise = (
