@@ -32,6 +32,11 @@ data = {
         "conditional_aggregation", "conditional_aggregation",
         "conditional_aggregation", "conditional_aggregation",
         "dates", "dates", "dates", "dates", "dates",
+        # Niveau 5 : window functions
+        "window_functions", "window_functions", "window_functions",
+        "window_functions", "window_functions", "window_functions",
+        "ranking", "ranking", "ranking",
+        "lag_lead", "lag_lead", "lag_lead", "lag_lead",
     ],
     "exercise_name": [
         "beverages_and_food",
@@ -82,6 +87,19 @@ data = {
         "clients_long_purchase_span",
         "monthly_revenue_pivot_per_client",
         "visits_vs_previous_week",
+        "visits_below_monthly_average",
+        "wage_vs_department_average",
+        "running_revenue_per_client",
+        "cumulative_revenue_end_of_day",
+        "daily_sales_full_3_day_average",
+        "visitors_last_7_calendar_days",
+        "sales_amount_rankings",
+        "top_2_sales_per_client",
+        "second_highest_wage_per_department",
+        "days_between_consecutive_purchases",
+        "daily_sales_day_over_day",
+        "gaps_before_next_visit_record",
+        "high_traffic_streaks",
     ],
     "statement": [
         "Associe chaque boisson à chaque plat pour générer toutes les combinaisons "
@@ -266,6 +284,61 @@ data = {
         "suppose pas qu'une semaine = un nombre fixe de lignes, travaille "
         "sur les dates. Colonnes : visit_date, visitor_count, valeur J-7, "
         "différence.",
+        # window_functions
+        "Dans sensor_visits, affiche les jours où la fréquentation est "
+        "inférieure de plus de 10 % à la moyenne du mois (visitor_count < "
+        "90 % de la moyenne de tous les relevés). Colonnes : visit_date, "
+        "visitor_count, moyenne du mois arrondie à 2 décimales. Calcule la "
+        "moyenne avec une window function, sans GROUP BY ni jointure.",
+        "Pour chaque salarié de wages, affiche name, department, wage, le "
+        "salaire moyen de son département et l'écart entre son salaire et "
+        "cette moyenne (les deux arrondis à 2 décimales). Toutes les lignes "
+        "sont conservées : pas de GROUP BY.",
+        "Pour chaque vente de sales, affiche client_name, sale_date, amount "
+        "et le chiffre d'affaires cumulé du client à cette date (somme de "
+        "ses ventes depuis la première, celle du jour comprise).",
+        "Pour chaque vente de sales, affiche sale_date, client_name, amount "
+        "et le CA cumulé de toutes les ventes à la fin de la journée de "
+        "cette vente : deux ventes du même jour ont donc le même cumul, qui "
+        "inclut les deux. Attention, plusieurs ventes partagent une date.",
+        "Dans daily_sales, affiche pour chaque jour sale_date, daily_sales "
+        "et la moyenne mobile sur 3 jours (le jour et les 2 précédents), "
+        "arrondie à 2 décimales. Les 2 premiers jours n'ont pas 3 jours "
+        "d'historique : la moyenne doit y valoir NULL, pas une moyenne sur "
+        "1 ou 2 jours.",
+        "Dans sensor_visits, affiche pour chaque relevé visit_date, "
+        "visitor_count et le total des visiteurs sur les 7 jours "
+        "calendaires qui se terminent ce jour-là (de J-6 à J inclus). Il "
+        "n'y a pas de relevé le dimanche.",
+        # ranking
+        "Classe les ventes de sales par montant décroissant. Affiche "
+        "client_name, sale_date, amount, puis trois classements : un numéro "
+        "unique (à montant égal, la vente la plus ancienne passe devant), "
+        "un rang avec trous en cas d'ex-aequo (1, 1, 3) et un rang sans "
+        "trou (1, 1, 2).",
+        "Pour chaque client de sales, affiche ses 2 plus grosses ventes "
+        "(exactement 2 lignes par client) : client_name, sale_date, amount. "
+        "À montant égal, garde la vente la plus ancienne.",
+        "Pour chaque département de wages, affiche le salarié qui a le 2e "
+        "salaire le plus élevé : department, name, wage. Un département "
+        "d'un seul salarié n'apparaît pas. Sans LIMIT / OFFSET : il faut "
+        "un résultat par département.",
+        # lag_lead
+        "Pour chaque vente de sales, affiche client_name, sale_date, la "
+        "date de l'achat précédent du même client et le nombre de jours "
+        "écoulés depuis (NULL pour son premier achat).",
+        "Dans daily_sales, affiche pour chaque jour sale_date, daily_sales, "
+        "les ventes de la veille, la variation (jour - veille) et la "
+        "variation en % des ventes de la veille, arrondie à 2 décimales "
+        "(ex : -83.33). Le premier jour n'a pas de veille : NULL. Attention "
+        "à la division entière sur d'autres SGBD que DuckDB.",
+        "Repère les trous dans sensor_visits : affiche les relevés suivis "
+        "d'au moins un jour sans relevé, avec visit_date, la date du relevé "
+        "suivant et le nombre de jours qui les séparent.",
+        "Dans sensor_visits, trouve les séries de jours calendaires "
+        "consécutifs où visitor_count est d'au moins 5000. Pour chaque "
+        "série d'au moins 2 jours, affiche la date de début, la date de fin "
+        "et le nombre de jours.",
     ],
     "tables": [
         ["beverages", "food_items"],
@@ -322,6 +395,22 @@ data = {
         ["sales"],
         ["sales"],
         ["sales"],
+        ["sensor_visits"],
+        # window_functions
+        ["sensor_visits"],
+        ["wages"],
+        ["sales"],
+        ["sales"],
+        ["daily_sales"],
+        ["sensor_visits"],
+        # ranking
+        ["sales"],
+        ["sales"],
+        ["wages"],
+        # lag_lead
+        ["sales"],
+        ["daily_sales"],
+        ["sensor_visits"],
         ["sensor_visits"],
     ],
 }
@@ -750,6 +839,27 @@ con.execute("""
 """)
 
 # ----------------------------------------
+# LEVEL 5 : WINDOW FUNCTIONS
+# ----------------------------------------
+# Les exercices réutilisent sensor_visits, wages et sales. Dans sales, chaque
+# montant apparaît deux fois (liste doublée) : égalités naturelles pour
+# RANK / DENSE_RANK / ROW_NUMBER. Deux dates (10/02 et 04/03) portent deux
+# ventes : piège ROWS vs RANGE sur un cumul par date.
+
+# daily_sales (cours : df ROWS BETWEEN). 01 -> 07/09 = valeurs du cours,
+# 08 -> 10/09 synthétique.
+con.execute("""
+    CREATE TABLE IF NOT EXISTS daily_sales AS
+    SELECT CAST(sale_date AS DATE) AS sale_date, daily_sales
+    FROM (VALUES
+        ('2023-09-01', 6000), ('2023-09-02', 1000), ('2023-09-03', 1000),
+        ('2023-09-04', 6000), ('2023-09-05', 3000), ('2023-09-06', 2000),
+        ('2023-09-07', 2000), ('2023-09-08', 4000), ('2023-09-09', 5000),
+        ('2023-09-10', 1500)
+    ) AS t(sale_date, daily_sales)
+""")
+
+# ----------------------------------------
 # FLASHCARDS (memocards) - fonctions SQL a retenir
 # ----------------------------------------
 # Contrairement aux exercices ci-dessus (requête à écrire, comparée à une
@@ -778,6 +888,7 @@ flashcards_data = {
         + ["grouping_sets"] * 4
         + ["conditional_aggregation"] * 4
         + ["dates"] * 2
+        + ["window_functions"] * 8
     ),
     "card_name": [
         # stats
@@ -849,6 +960,15 @@ flashcards_data = {
         # dates (suite)
         "extract_dow",
         "same_day_previous_week",
+        # window_functions (suite)
+        "over_empty",
+        "running_total",
+        "rows_between",
+        "range_interval",
+        "filter_on_window",
+        "top_n_per_group",
+        "window_after_group_by",
+        "gaps_and_islands",
     ],
     "question": [
         # stats
@@ -953,6 +1073,22 @@ flashcards_data = {
         "la convention de numérotation ?",
         "Comment comparer chaque jour au même jour de la semaine précédente "
         "quand il manque des dates (pas de relevé certains jours) ?",
+        # window_functions (suite)
+        "Comment afficher sur chaque ligne un agrégat calculé sur toute la "
+        "table (ex : total général), sans réduire le nombre de lignes ?",
+        "Comment calculer un cumul progressif, et quelle est la fenêtre "
+        "par défaut quand on met seulement ORDER BY dans OVER ?",
+        "Comment calculer une moyenne mobile sur les 3 dernières lignes ?",
+        "Comment définir une fenêtre de 7 jours calendaires quand il "
+        "manque des dates ?",
+        "Pourquoi ne peut-on pas filtrer sur une window function dans le "
+        "WHERE, et comment faire ?",
+        "Comment garder les N premières lignes de chaque groupe (ex : les 2 "
+        "plus grosses ventes de chaque client) ?",
+        "Comment calculer la part de chaque groupe dans le total, dans la "
+        "même requête que le GROUP BY ?",
+        "Comment regrouper des jours consécutifs en séries (gaps and "
+        "islands) ?",
     ],
     "answer": [
         # stats
@@ -1054,6 +1190,30 @@ flashcards_data = {
         "Self join sur la date : LEFT JOIN t prev ON prev.d = cur.d - "
         "INTERVAL '7 days'  -- LAG(x, 7) suppose une ligne par jour, sans "
         "trou",
+        # window_functions (suite)
+        "SUM(colonne) OVER ()  -- OVER vide = toute la table comme "
+        "fenêtre, résultat répété sur chaque ligne",
+        "SUM(x) OVER (ORDER BY d)  -- défaut : RANGE BETWEEN UNBOUNDED "
+        "PRECEDING AND CURRENT ROW, les ex-aequo sur d sont cumulés "
+        "ensemble ; ROWS UNBOUNDED PRECEDING pour un cumul ligne à ligne",
+        "AVG(x) OVER (ORDER BY d ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)  "
+        "-- aux bords la fenêtre est plus petite : tester COUNT(*) OVER "
+        "(même fenêtre) = 3 pour n'afficher que les fenêtres complètes",
+        "SUM(x) OVER (ORDER BY d RANGE BETWEEN INTERVAL '6 days' PRECEDING "
+        "AND CURRENT ROW)  -- RANGE porte sur les valeurs de d, ROWS sur le "
+        "nombre de lignes",
+        "Les window functions sont calculées au moment du SELECT, après "
+        "WHERE / GROUP BY / HAVING : les calculer dans une CTE, puis "
+        "filtrer dessus. QUALIFY (DuckDB, Snowflake, BigQuery) le fait "
+        "directement, mais n'est pas portable",
+        "CTE avec ROW_NUMBER() OVER (PARTITION BY groupe ORDER BY x DESC) "
+        "AS rn, puis WHERE rn <= N  -- RANK / DENSE_RANK si tous les "
+        "ex-aequo doivent être gardés",
+        "SUM(SUM(x)) OVER ()  -- la window function s'applique après le "
+        "GROUP BY, sur les lignes déjà agrégées",
+        "d - ROW_NUMBER() OVER (ORDER BY d) * INTERVAL '1 day' est "
+        "constant sur une série de jours consécutifs : GROUP BY sur cette "
+        "clé, puis MIN(d), MAX(d), COUNT(*)",
     ],
     "example": [
         # stats
@@ -1221,6 +1381,50 @@ flashcards_data = {
         "FROM sensor_visits cur\n"
         "LEFT JOIN sensor_visits prev\n"
         "    ON prev.visit_date = cur.visit_date - INTERVAL '7 days';",
+        # window_functions (suite)
+        "SELECT client_name, amount,\n"
+        "    amount * 100.0 / SUM(amount) OVER () AS pct_of_total\n"
+        "FROM sales;",
+        "SELECT sale_date, amount,\n"
+        "    SUM(amount) OVER (ORDER BY sale_date) AS cumulative_revenue\n"
+        "FROM sales;",
+        "SELECT sale_date, daily_sales,\n"
+        "    AVG(daily_sales) OVER (\n"
+        "        ORDER BY sale_date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW\n"
+        "    ) AS moving_avg_3\n"
+        "FROM daily_sales;",
+        "SELECT visit_date,\n"
+        "    SUM(visitor_count) OVER (\n"
+        "        ORDER BY visit_date\n"
+        "        RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW\n"
+        "    ) AS last_7_days\n"
+        "FROM sensor_visits;",
+        "WITH v AS (\n"
+        "    SELECT visit_date, visitor_count,\n"
+        "        AVG(visitor_count) OVER () AS avg_count\n"
+        "    FROM sensor_visits\n"
+        ")\n"
+        "SELECT * FROM v WHERE visitor_count < avg_count;",
+        "WITH ranked AS (\n"
+        "    SELECT client_name, amount,\n"
+        "        ROW_NUMBER() OVER (\n"
+        "            PARTITION BY client_name ORDER BY amount DESC\n"
+        "        ) AS rn\n"
+        "    FROM sales\n"
+        ")\n"
+        "SELECT * FROM ranked WHERE rn <= 2;",
+        "SELECT department, SUM(wage) AS payroll,\n"
+        "    SUM(wage) * 100.0 / SUM(SUM(wage)) OVER () AS pct_of_total\n"
+        "FROM wages\n"
+        "GROUP BY department;",
+        "WITH s AS (\n"
+        "    SELECT visit_date,\n"
+        "        visit_date - ROW_NUMBER() OVER (ORDER BY visit_date)\n"
+        "            * INTERVAL '1 day' AS streak_key\n"
+        "    FROM sensor_visits\n"
+        ")\n"
+        "SELECT MIN(visit_date), MAX(visit_date), COUNT(*)\n"
+        "FROM s GROUP BY streak_key;",
     ],
 }
 flashcards_data["last_reviewed"] = ["1970-01-01"] * len(flashcards_data["card_name"])
