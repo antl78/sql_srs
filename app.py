@@ -22,15 +22,99 @@ if "exercises_sql_tables.duckdb" not in os.listdir("data"):
     exec(open("init_db.py").read()) # pylint disable
     # subprocess.run(["python", "init_db.py"]) # ne marche pas avec Streamlit
 
+CONTENT_DB = "data/exercises_sql_tables.duckdb"
+PROGRESS_DB = "data/progress.duckdb"
+
+# Colonnes de progression stockées dans la base de contenu avant la
+# séparation contenu / progression (cf. migrate_legacy_progress).
+LEGACY_PROGRESS_COLUMNS = ("last_reviewed", "interval_step")
+
+
+def has_column(connection: duckdb.DuckDBPyConnection, table: str, column: str) -> bool:
+    """True si la table de la base de contenu possède cette colonne."""
+    return connection.execute(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_catalog = current_database() "
+        "AND table_name = ? AND column_name = ?",
+        [table, column],
+    ).fetchone()[0] > 0
+
+
+def migrate_legacy_progress(connection: duckdb.DuckDBPyConnection) -> None:
+    """Migration unique d'une base créée avant la séparation contenu /
+    progression : renomme memory_state en exercises, copie la progression
+    existante vers progress.duckdb, puis retire les colonnes de progression
+    de la base de contenu. Idempotente : ne fait rien sur une base à jour."""
+    content_tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_catalog = current_database()"
+        ).fetchall()
+    }
+    if "memory_state" in content_tables and "exercises" not in content_tables:
+        connection.execute("ALTER TABLE memory_state RENAME TO exercises")
+
+    if has_column(connection, "exercises", "last_reviewed"):
+        # Seuls les exercices déjà révisés sont copiés : les dates par
+        # défaut (1970 / 1980) signifiaient "jamais révisé", ce qui
+        # correspond désormais à l'absence de ligne dans exercise_progress.
+        connection.execute("""
+            INSERT INTO progress.exercise_progress
+            SELECT exercise_name, CAST(last_reviewed AS DATE), interval_step
+            FROM exercises
+            WHERE CAST(last_reviewed AS DATE) > DATE '1980-01-01'
+            ON CONFLICT DO NOTHING
+        """)
+
+    # Noms de colonnes constants (jamais issus d'une saisie utilisateur).
+    for table in ("exercises", "flashcards"):
+        for column in LEGACY_PROGRESS_COLUMNS:
+            connection.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS {column}")
+
+
 @st.cache_resource
 def get_connection():
-    """Connexion DuckDB unique, réutilisée entre les reruns Streamlit."""
-    return duckdb.connect(database="data/exercises_sql_tables.duckdb", read_only=False)
+    """Connexion DuckDB unique, réutilisée entre les reruns Streamlit.
+
+    Deux bases distinctes :
+    - CONTENT_DB : exercices, tables d'exercices et mémocards. Versionnée dans
+      le repo, régénérable par init_db.py ; l'app n'y écrit jamais (le bac à
+      sable CRUD est annulé par ROLLBACK).
+    - PROGRESS_DB : progression de révision, locale et ignorée par git,
+      attachée sous le nom "progress" (créée au premier lancement)."""
+    connection = duckdb.connect(database=CONTENT_DB, read_only=False)
+    # Chemin constant : ATTACH n'accepte pas de paramètre préparé.
+    connection.execute(f"ATTACH '{PROGRESS_DB}' AS progress")
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS progress.exercise_progress (
+            exercise_name VARCHAR PRIMARY KEY,
+            last_reviewed DATE NOT NULL,
+            interval_step INTEGER NOT NULL
+        )
+    """)
+    migrate_legacy_progress(connection)
+    return connection
 
 
 con = get_connection()
 
 REVIEW_INTERVALS = [2, 7, 21]  # jours, du plus court au plus long
+
+# Exercices + état de révision. Un exercice sans ligne dans
+# exercise_progress n'a jamais été révisé : il est dû immédiatement.
+# position (rowid) départage les ex aequo dans l'ordre du programme.
+EXERCISE_STATE_CTE = """
+WITH exercise_state AS (
+    SELECT
+        e.*,
+        e.rowid AS position,
+        COALESCE(p.last_reviewed, DATE '1970-01-01') AS last_reviewed,
+        COALESCE(p.interval_step, 0) AS interval_step
+    FROM exercises AS e
+    LEFT JOIN progress.exercise_progress AS p USING (exercise_name)
+)
+"""
 
 # Thèmes par niveau de maîtrise SQL (cf. doc du projet), dans l'ordre
 # d'affichage de la barre latérale. Un thème absent de ces dictionnaires
@@ -150,7 +234,7 @@ def run_dml_in_sandbox(query_text: str, check_table: str) -> pd.DataFrame:
     try:
         cursor.begin()
         cursor.execute(query_text)
-        # check_table vient de memory_state (jamais de la saisie
+        # check_table vient de exercises (jamais de la saisie
         # utilisateur) ; on le quote quand même comme identifiant.
         quoted_table = '"' + check_table.replace('"', '""') + '"'
         return cursor.execute(f"SELECT * FROM {quoted_table}").df()
@@ -193,8 +277,9 @@ def run_check(
                 return
             result = run_dml_in_sandbox(query_text, check_table)
         else:
-            # La connexion est en lecture/écriture (progression de
-            # révision) : on n'accepte qu'UNE instruction de type SELECT
+            # La connexion est en lecture/écriture (bac à sable CRUD,
+            # base de progression attachée) : on n'accepte qu'UNE
+            # instruction de type SELECT
             # (CTE incluses), sinon un DROP/DELETE/UPDATE tapé dans la zone
             # de texte modifierait réellement la base.
             if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
@@ -224,6 +309,18 @@ def run_check(
     st.session_state["last_check_correct"] = correct
 
 
+def save_progress(name: str, days_from_today: int, interval_step: int) -> None:
+    """Programme la prochaine révision d'un exercice (upsert dans la base
+    de progression)."""
+    con.execute(
+        "INSERT INTO progress.exercise_progress VALUES (?, ?, ?) "
+        "ON CONFLICT (exercise_name) DO UPDATE SET "
+        "last_reviewed = excluded.last_reviewed, "
+        "interval_step = excluded.interval_step",
+        [name, date.today() + timedelta(days=days_from_today), interval_step],
+    )
+
+
 def advance_exercise(name: str, next_days: int, new_step: int) -> None:
     """Callback (on_click) du bouton Continuer : programme la prochaine
     révision. Volontairement PAS de st.rerun() ici — un st.rerun() appelé
@@ -231,31 +328,23 @@ def advance_exercise(name: str, next_days: int, new_step: int) -> None:
     sélection de thème (session_state vidé) une fois sur deux ; un on_click
     s'exécute avant le script principal, qui repart de toute façon avec les
     données à jour au rerun naturel déclenché par le clic."""
-    con.execute(
-        "UPDATE memory_state SET last_reviewed = ?, interval_step = ? "
-        "WHERE exercise_name = ?",
-        [str(date.today() + timedelta(days=next_days)), new_step, name],
-    )
+    save_progress(name, next_days, new_step)
     st.session_state["last_check_correct"] = None
     st.session_state["check_result"] = None
 
 
 def reschedule_exercise(name: str, days: int, step: int = 0) -> None:
     """Callback (on_click) du bouton Revoir plus tard."""
-    con.execute(
-        "UPDATE memory_state SET last_reviewed = ?, interval_step = ? "
-        "WHERE exercise_name = ?",
-        [str(date.today() + timedelta(days=days)), step, name],
-    )
+    save_progress(name, days, step)
     st.session_state["last_check_correct"] = None
     st.session_state["check_result"] = None
 
 
 def reset_exercise_now(name: str) -> None:
-    """Callback (on_click) du bouton Reset."""
+    """Callback (on_click) du bouton Reset : sans ligne de progression,
+    l'exercice redevient "jamais révisé", donc dû immédiatement."""
     con.execute(
-        "UPDATE memory_state SET last_reviewed = '1970-01-01', interval_step = 0 "
-        "WHERE exercise_name = ?",
+        "DELETE FROM progress.exercise_progress WHERE exercise_name = ?",
         [name],
     )
     st.session_state["last_check_correct"] = None
@@ -349,9 +438,10 @@ with st.sidebar:
 if app_mode == "Exercices SQL":
     with st.sidebar:
         theme_counts_df = con.execute(
-            "SELECT theme, "
-            "COUNT(*) FILTER (WHERE CAST(last_reviewed AS DATE) <= CURRENT_DATE) AS due "
-            "FROM memory_state GROUP BY theme ORDER BY theme"
+            EXERCISE_STATE_CTE
+            + "SELECT theme, "
+            "COUNT(*) FILTER (WHERE last_reviewed <= CURRENT_DATE) AS due "
+            "FROM exercise_state GROUP BY theme ORDER BY theme"
         ).df()
         due_by_theme = dict(zip(theme_counts_df["theme"], theme_counts_df["due"].astype(int)))
         st.metric("À réviser aujourd'hui", sum(due_by_theme.values()))
@@ -366,10 +456,13 @@ if app_mode == "Exercices SQL":
 
         if theme:
             exercise = (
-                con.execute("SELECT * FROM memory_state WHERE theme = ?", [theme])
+                con.execute(
+                    EXERCISE_STATE_CTE
+                    + "SELECT * FROM exercise_state WHERE theme = ? "
+                    "ORDER BY last_reviewed, position",
+                    [theme],
+                )
                 .df()
-                .sort_values("last_reviewed")
-                .reset_index(drop=True)
             )
             exercise_name = exercise.loc[0, "exercise_name"]
             st.caption(f"Exercice : {exercise_name.replace('_', ' ').title()}")

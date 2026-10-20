@@ -6,3 +6,4 @@ test_db.py
 *.duckdb.wal
 __pycache__/
 *.pyc
+data/progress.duckdb

@@ -7,6 +7,20 @@ import duckdb
 
 con = duckdb.connect(database="data/exercises_sql_tables.duckdb", read_only=False)
 
+# Base de CONTENU uniquement (exercices, tables, mémocards) : la progression
+# de révision vit dans data/progress.duckdb, gérée par app.py.
+# Ancien nom de la table des exercices (quand elle contenait aussi la
+# progression) : renommée pour qu'une base existante soit mise à jour.
+legacy_tables = [
+    row[0]
+    for row in con.execute(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_name IN ('memory_state', 'exercises')"
+    ).fetchall()
+]
+if legacy_tables == ["memory_state"]:
+    con.execute("ALTER TABLE memory_state RENAME TO exercises")
+
 # ----------------------------------------
 # EXERCISES LIST
 # ----------------------------------------
@@ -414,26 +428,16 @@ data = {
         ["sensor_visits"],
     ],
 }
-nb_exercises = len(data["exercise_name"])
-data["last_reviewed"] = ["1980-01-01"] + ["1970-01-01"] * (nb_exercises - 1)
-# Position dans l'échelle de révision REVIEW_INTERVALS (app.py) : avance
-# d'un cran à chaque succès, retombe à 0 au premier échec.
-data["interval_step"] = [0] * nb_exercises
-memory_state_df = pd.DataFrame(data)
-con.execute("CREATE TABLE IF NOT EXISTS memory_state AS SELECT * FROM memory_state_df")
+exercises_df = pd.DataFrame(data)
+con.execute("CREATE TABLE IF NOT EXISTS exercises AS SELECT * FROM exercises_df")
 
-# Si la base existe déjà (memory_state pré-existant), on ajoute seulement les
-# exercices absents plutôt que de recréer la table : ça évite d'écraser la
-# progression (last_reviewed / interval_step) des exercices déjà en cours.
+# Si la base existe déjà, on ajoute seulement les exercices absents (l'ordre
+# d'insertion sert d'ordre de passage dans app.py, cf. EXERCISE_STATE_CTE).
 con.execute("""
-    INSERT INTO memory_state
-        (theme, exercise_name, statement, tables, last_reviewed, interval_step)
-    SELECT n.theme, n.exercise_name, n.statement, n.tables,
-        n.last_reviewed, n.interval_step
-    FROM memory_state_df n
-    WHERE NOT EXISTS (
-        SELECT 1 FROM memory_state m WHERE m.exercise_name = n.exercise_name
-    )
+    INSERT INTO exercises (theme, exercise_name, statement, tables)
+    SELECT n.theme, n.exercise_name, n.statement, n.tables
+    FROM exercises_df AS n
+    ANTI JOIN exercises AS m USING (exercise_name)
 """)
 
 # ----------------------------------------
@@ -683,7 +687,7 @@ con.execute(f"CREATE TABLE IF NOT EXISTS sales AS {SALES_SELECT}")
 
 # Migration d'une base créée avant le niveau 4 (sales sans sale_date) : la
 # table est recréée, ce qui est sans risque car elle ne contient aucune
-# progression (celle-ci est dans memory_state).
+# progression (celle-ci est dans data/progress.duckdb).
 sales_has_date = con.execute("""
     SELECT COUNT(*) FROM information_schema.columns
     WHERE table_name = 'sales' AND column_name = 'sale_date'
@@ -866,9 +870,10 @@ con.execute("""
 # solution), une flashcard est une simple paire question/réponse pour la
 # mémorisation de syntaxe, accompagnée d'un exemple de requête concret
 # (colonne "example", affiché sous la réponse dans l'app) pour visualiser
-# la syntaxe en contexte. Table séparée de memory_state : pas de notion de
-# "tables" utilisées, mais même logique de planification (last_reviewed /
-# interval_step) pour pouvoir réutiliser REVIEW_INTERVALS plus tard.
+# la syntaxe en contexte. Table séparée de exercises : pas de notion de
+# "tables" utilisées. Pas encore de répétition espacée sur les cartes ; le
+# moment venu, leur progression ira dans data/progress.duckdb, comme celle
+# des exercices.
 # En syntaxe SQL pure (pas d'équivalent pandas, pour ne pas mélanger les
 # deux dans une même carte).
 
@@ -1427,8 +1432,6 @@ flashcards_data = {
         "FROM s GROUP BY streak_key;",
     ],
 }
-flashcards_data["last_reviewed"] = ["1970-01-01"] * len(flashcards_data["card_name"])
-flashcards_data["interval_step"] = [0] * len(flashcards_data["card_name"])
 flashcards_df = pd.DataFrame(flashcards_data)
 con.execute("CREATE TABLE IF NOT EXISTS flashcards AS SELECT * FROM flashcards_df")
 
@@ -1437,26 +1440,18 @@ con.execute("CREATE TABLE IF NOT EXISTS flashcards AS SELECT * FROM flashcards_d
 # modifie pas un schéma déjà existant).
 con.execute("ALTER TABLE flashcards ADD COLUMN IF NOT EXISTS example VARCHAR")
 
-# Même logique que pour memory_state : on n'ajoute que les cartes absentes,
-# pour ne pas écraser la progression de révision des cartes déjà en place.
+# Même logique que pour exercises : on n'ajoute que les cartes absentes.
 # Colonnes listées explicitement : dans une base créée avant l'ajout de
-# "example", cette colonne est en DERNIÈRE position (ALTER TABLE), alors
-# qu'elle précède last_reviewed dans flashcards_df.
+# "example", cette colonne est en DERNIÈRE position (ALTER TABLE).
 con.execute("""
-    INSERT INTO flashcards
-        (theme, card_name, question, answer, example, last_reviewed, interval_step)
-    SELECT n.theme, n.card_name, n.question, n.answer, n.example,
-        n.last_reviewed, n.interval_step
-    FROM flashcards_df n
-    WHERE NOT EXISTS (
-        SELECT 1 FROM flashcards m WHERE m.card_name = n.card_name
-    )
+    INSERT INTO flashcards (theme, card_name, question, answer, example)
+    SELECT n.theme, n.card_name, n.question, n.answer, n.example
+    FROM flashcards_df AS n
+    ANTI JOIN flashcards AS m USING (card_name)
 """)
 
 # Le contenu pédagogique (question/answer/example) peut évoluer pour une
-# carte déjà existante : on le rafraîchit systématiquement, contrairement à
-# last_reviewed/interval_step (progression de révision) qui ne sont jamais
-# touchés une fois la carte créée.
+# carte déjà existante : on le rafraîchit systématiquement.
 con.execute("""
     UPDATE flashcards
     SET question = flashcards_df.question,
