@@ -99,31 +99,82 @@ def dataframes_match(user_df: pd.DataFrame, solution_df: pd.DataFrame) -> bool:
     return False
 
 
-def run_check(text_key: str, solution_df: pd.DataFrame) -> None:
+# Instructions acceptées pour les exercices du thème "crud".
+DML_STATEMENT_TYPES = {
+    duckdb.StatementType.INSERT,
+    duckdb.StatementType.UPDATE,
+    duckdb.StatementType.DELETE,
+}
+
+
+def run_dml_in_sandbox(query_text: str, check_table: str) -> pd.DataFrame:
+    """Exécute des INSERT/UPDATE/DELETE dans une transaction, lit l'état de
+    check_table, puis annule tout (ROLLBACK) : la base n'est jamais modifiée,
+    un exercice CRUD peut donc être refait à l'identique.
+
+    con.cursor() ouvre une connexion séparée sur la même base, avec sa
+    propre transaction : la connexion partagée (cache_resource) et les
+    autres sessions ne voient jamais les modifications en cours."""
+    cursor = con.cursor()
+    try:
+        cursor.begin()
+        cursor.execute(query_text)
+        # check_table vient de memory_state (jamais de la saisie
+        # utilisateur) ; on le quote quand même comme identifiant.
+        quoted_table = '"' + check_table.replace('"', '""') + '"'
+        return cursor.execute(f"SELECT * FROM {quoted_table}").df()
+    finally:
+        cursor.rollback()
+        cursor.close()
+
+
+def run_check(
+    text_key: str, solution_df: pd.DataFrame, check_table: str | None = None
+) -> None:
     """Exécute la requête et range le verdict dans session_state, sans
     appeler directement st.write/st.dataframe/... : cette fonction sert
     de callback (Ctrl+Entrée et bouton Valider), et Streamlit déconseille
-    d'afficher des éléments depuis un callback."""
+    d'afficher des éléments depuis un callback.
+
+    check_table renseigné = exercice CRUD : la requête est exécutée en
+    bac à sable (run_dml_in_sandbox) et c'est l'état final de cette table
+    qui est comparé à la solution."""
     query_text = st.session_state.get(text_key, "")
     if not query_text.strip():
         st.session_state["check_result"] = {"status": "empty"}
         return
 
     try:
-        # La connexion est en lecture/écriture (progression de révision) :
-        # on n'accepte qu'UNE instruction de type SELECT (CTE incluses),
-        # sinon un DROP/DELETE/UPDATE tapé dans la zone de texte
-        # modifierait réellement la base.
         statements = con.extract_statements(query_text)
-        if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
-            st.session_state["check_result"] = {
-                "status": "error",
-                "message": "Seule une requête SELECT (une seule instruction, "
-                "CTE autorisées) est acceptée.",
-            }
-            st.session_state["last_check_correct"] = False
-            return
-        result = con.execute(query_text).df()
+        if check_table:
+            # Exercice CRUD : une ou plusieurs instructions INSERT / UPDATE /
+            # DELETE (CTE autorisées), rien d'autre (pas de DROP, CREATE,
+            # BEGIN/COMMIT...).
+            if not statements or any(
+                s.type not in DML_STATEMENT_TYPES for s in statements
+            ):
+                st.session_state["check_result"] = {
+                    "status": "error",
+                    "message": "Exercice CRUD : seules des instructions INSERT, "
+                    "UPDATE ou DELETE sont acceptées.",
+                }
+                st.session_state["last_check_correct"] = False
+                return
+            result = run_dml_in_sandbox(query_text, check_table)
+        else:
+            # La connexion est en lecture/écriture (progression de
+            # révision) : on n'accepte qu'UNE instruction de type SELECT
+            # (CTE incluses), sinon un DROP/DELETE/UPDATE tapé dans la zone
+            # de texte modifierait réellement la base.
+            if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
+                st.session_state["check_result"] = {
+                    "status": "error",
+                    "message": "Seule une requête SELECT (une seule instruction, "
+                    "CTE autorisées) est acceptée.",
+                }
+                st.session_state["last_check_correct"] = False
+                return
+            result = con.execute(query_text).df()
     except Exception as e:  # pylint: disable=broad-exception-caught
         st.session_state["check_result"] = {"status": "error", "message": str(e)}
         st.session_state["last_check_correct"] = False
@@ -260,7 +311,15 @@ if app_mode == "Exercices SQL":
             with open(f"answers/{exercise_name}.sql", "r", encoding="utf-8") as f:
                 answer = f.read()
 
-            solution_df = con.execute(answer).df()
+            # Thème "crud" : la première table de l'exercice est celle dont
+            # l'état final (après la requête) est comparé.
+            check_table = (
+                str(exercise.loc[0, "tables"][0]) if theme == "crud" else None
+            )
+            if check_table:
+                solution_df = run_dml_in_sandbox(answer, check_table)
+            else:
+                solution_df = con.execute(answer).df()
 
     if not theme:
         st.info("Sélectionnez un thème dans la barre à gauche")
@@ -286,14 +345,14 @@ if app_mode == "Exercices SQL":
             label="Votre code SQL ici (Ctrl+Entrée pour valider)",
             key=text_key,
             on_change=run_check,
-            args=(text_key, solution_df),
+            args=(text_key, solution_df, check_table),
         )
 
         st.button(
             "Valider",
             type="primary",
             on_click=run_check,
-            args=(text_key, solution_df),
+            args=(text_key, solution_df, check_table),
         )
 
         check_result = st.session_state.get("check_result")
@@ -303,6 +362,11 @@ if app_mode == "Exercices SQL":
             elif check_result["status"] == "error":
                 st.error(f"Erreur SQL : {check_result['message']}")
             elif check_result["status"] == "ok":
+                if check_table:
+                    st.caption(
+                        f"Table {check_table} après votre requête (modifications "
+                        "annulées ensuite, la base n'est pas changée) :"
+                    )
                 st.dataframe(check_result["result"])
                 if check_result["correct"]:
                     st.success("✅ Bonne réponse !")
@@ -353,8 +417,12 @@ if app_mode == "Exercices SQL":
                 st.dataframe(df_table)
 
         with tab3:
-            st.write(answer)
-            st.caption("Résultat de la solution :")
+            st.code(answer, language="sql")
+            st.caption(
+                f"Table {check_table} après la solution :"
+                if check_table
+                else "Résultat de la solution :"
+            )
             st.dataframe(solution_df)
 
 else:

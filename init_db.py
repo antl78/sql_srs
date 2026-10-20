@@ -17,6 +17,10 @@ data = {
         "self_joins",
         "aggregation", "aggregation", "aggregation",
         "aggregation", "aggregation", "aggregation",
+        # Niveau 2 : self join (suite), CTE, CRUD
+        "self_joins", "self_joins",
+        "cte", "cte", "cte", "cte",
+        "crud", "crud", "crud", "crud",
     ],
     "exercise_name": [
         "beverages_and_food",
@@ -36,6 +40,16 @@ data = {
         "sales_stats_per_client",
         "top_3_clients_by_revenue",
         "clients_above_average_basket",
+        "employees_and_manager_n2",
+        "employees_without_reports",
+        "order_amounts_with_cte",
+        "customers_without_valid_order",
+        "benjamin_colleagues_meeting_time",
+        "client_revenue_share",
+        "insert_missing_product",
+        "raise_expensive_products_price",
+        "delete_customers_without_orders",
+        "archive_big_sales",
     ],
     "statement": [
         "Associe chaque boisson à chaque plat pour générer toutes les combinaisons "
@@ -86,6 +100,44 @@ data = {
         "générale des paniers moyens (moyenne des moyennes par client), "
         "en utilisant deux CTE plutôt qu'une sous-requête : une pour le "
         "panier moyen par client, une pour la moyenne générale.",
+        # self_joins
+        "Pour chaque employé qui a un N+2 (le manager de son manager), "
+        "affiche son nom et celui de son N+2. Les employés sans N+2 ne "
+        "doivent pas apparaître.",
+        "Retrouve les employés qui ne managent personne (aucun employé "
+        "n'a leur employee_id comme manager_id), avec une auto-jointure "
+        "plutôt qu'une sous-requête.",
+        # cte
+        "Calcule le montant de chaque commande (quantity × product_price) "
+        "avec le nom du client, en une seule requête : une CTE pour "
+        "valoriser les lignes de commande, sans passer par les tables "
+        "intermédiaires detailed_order / order_client. Les commandes dont "
+        "le produit n'existe pas dans products sont exclues.",
+        "Retrouve les clients qui n'ont aucune commande valide, c'est-à-dire "
+        "aucune commande portant sur un produit présent dans products "
+        "(clients sans commande inclus). Construis d'abord les commandes "
+        "valides dans une CTE.",
+        "Pour chaque collègue de Benjamin, compte le nombre de réunions "
+        "partagées avec lui et la durée totale (en minutes) de ces "
+        "réunions. Isole d'abord les réunions de Benjamin dans une CTE.",
+        "Calcule, pour chaque client, son chiffre d'affaires total et sa "
+        "part dans le chiffre d'affaires global, en pourcentage arrondi à "
+        "2 décimales (ROUND). Utilise deux CTE (CA par client, CA global) "
+        "plutôt qu'une sous-requête.",
+        # crud
+        "Le produit 102 apparaît dans order_details mais pas dans le "
+        "catalogue : ajoute-le à products, avec le nom 'Casque' et le prix "
+        "150. (Le résultat comparé est la table products après ta requête.)",
+        "Augmente de 50 le prix de tous les produits de products qui "
+        "coûtent plus de 100. (Le résultat comparé est la table products "
+        "après ta requête.)",
+        "Supprime de customers les clients qui n'ont passé aucune commande "
+        "(absents de orders). Isole-les d'abord dans une CTE. (Le résultat "
+        "comparé est la table customers après ta requête.)",
+        "Archive dans sales_archive (vide pour l'instant) toutes les ventes "
+        "de sales d'un montant supérieur ou égal à 60, en une seule "
+        "requête INSERT ... SELECT. (Le résultat comparé est la table "
+        "sales_archive après ta requête.)",
     ],
     "tables": [
         ["beverages", "food_items"],
@@ -105,17 +157,25 @@ data = {
         ["sales"],
         ["sales"],
         ["sales"],
+        ["employees"],
+        ["employees"],
+        ["orders", "order_details", "customers", "products"],
+        ["customers", "orders", "order_details", "products"],
+        ["merged_df"],
+        ["sales"],
+        # crud : la PREMIÈRE table de la liste est celle dont l'état final
+        # est comparé à la solution (voir run_dml_in_sandbox dans app.py).
+        ["products", "order_details"],
+        ["products"],
+        ["customers", "orders"],
+        ["sales_archive", "sales"],
     ],
-    "last_reviewed": [
-        "1980-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
-        "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
-        "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01", "1970-01-01",
-        "1970-01-01", "1970-01-01",
-    ],
-    # Position dans l'échelle de révision REVIEW_INTERVALS (app.py) : avance
-    # d'un cran à chaque succès, retombe à 0 au premier échec.
-    "interval_step": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 }
+nb_exercises = len(data["exercise_name"])
+data["last_reviewed"] = ["1980-01-01"] + ["1970-01-01"] * (nb_exercises - 1)
+# Position dans l'échelle de révision REVIEW_INTERVALS (app.py) : avance
+# d'un cran à chaque succès, retombe à 0 au premier échec.
+data["interval_step"] = [0] * nb_exercises
 memory_state_df = pd.DataFrame(data)
 con.execute("CREATE TABLE IF NOT EXISTS memory_state AS SELECT * FROM memory_state_df")
 
@@ -124,7 +184,10 @@ con.execute("CREATE TABLE IF NOT EXISTS memory_state AS SELECT * FROM memory_sta
 # progression (last_reviewed / interval_step) des exercices déjà en cours.
 con.execute("""
     INSERT INTO memory_state
-    SELECT n.* FROM memory_state_df n
+        (theme, exercise_name, statement, tables, last_reviewed, interval_step)
+    SELECT n.theme, n.exercise_name, n.statement, n.tables,
+        n.last_reviewed, n.interval_step
+    FROM memory_state_df n
     WHERE NOT EXISTS (
         SELECT 1 FROM memory_state m WHERE m.exercise_name = n.exercise_name
     )
@@ -361,6 +424,33 @@ sales = pd.DataFrame(sales_data)
 con.execute("CREATE TABLE IF NOT EXISTS sales AS SELECT * FROM sales")
 
 # ----------------------------------------
+# LEVEL 2 : SELF JOIN (SUITE), CTE, CRUD
+# ----------------------------------------
+# employees : dataset du cours Data Upskilling (self join n+2), repris tel
+# quel. Hiérarchie : Sylvie (12) > Daniel (13) > Sophie (11), Kaouter (14) ;
+# Sophie (11) > David (15).
+con.execute("""
+    CREATE TABLE IF NOT EXISTS employees AS
+    SELECT * FROM (VALUES
+        (11, 'Sophie', 13),
+        (12, 'Sylvie', NULL),
+        (13, 'Daniel', 12),
+        (14, 'Kaouter', 13),
+        (15, 'David', 11)
+    ) AS t(employee_id, employee_name, manager_id)
+""")
+
+# sales_archive : table cible (vide) de l'exercice CRUD INSERT ... SELECT.
+# Les exercices CRUD sont exécutés dans une transaction annulée ensuite
+# (ROLLBACK, voir app.py) : cette table reste donc vide en base.
+con.execute("""
+    CREATE TABLE IF NOT EXISTS sales_archive (
+        client_name VARCHAR,
+        amount DOUBLE
+    )
+""")
+
+# ----------------------------------------
 # FLASHCARDS (memocards) - fonctions SQL a retenir
 # ----------------------------------------
 # Contrairement aux exercices ci-dessus (requête à écrire, comparée à une
@@ -377,13 +467,14 @@ flashcards_data = {
     "theme": (
         ["stats"] * 6
         + ["window_functions"] * 6
-        + ["cte"] * 1
-        + ["joins"] * 5
-        + ["null_filtering"] * 3
+        + ["cte"] * 2
+        + ["joins"] * 6
+        + ["null_filtering"] * 4
         + ["aggregates"] * 2
         + ["sets"] * 1
         + ["dates"] * 5
         + ["strings"] * 6
+        + ["crud"] * 4
     ),
     "card_name": [
         # stats
@@ -402,16 +493,19 @@ flashcards_data = {
         "partition_by",
         # cte
         "cte_syntax",
+        "multiple_ctes",
         # joins
         "inner_join",
         "left_join",
         "full_outer_join",
         "cross_join",
         "self_join",
+        "anti_join",
         # null_filtering
         "where_vs_having",
         "nullif",
         "is_null",
+        "logical_query_order",
         # aggregates
         "count_star_vs_column",
         "distinct",
@@ -430,6 +524,11 @@ flashcards_data = {
         "trim",
         "length_string",
         "like_pattern",
+        # crud
+        "insert_values",
+        "insert_select",
+        "update_set",
+        "delete_where",
     ],
     "question": [
         # stats
@@ -458,6 +557,7 @@ flashcards_data = {
         "GROUP BY) ?",
         # cte
         "Comment écrire une CTE (Common Table Expression) ?",
+        "Comment enchaîner plusieurs CTE dans une même requête ?",
         # joins
         "Quel JOIN ne garde que les lignes présentes dans les deux "
         "tables ?",
@@ -468,11 +568,14 @@ flashcards_data = {
         "Quel JOIN génère toutes les combinaisons possibles entre deux "
         "tables (produit cartésien) ?",
         "Comment appelle-t-on une jointure d'une table sur elle-même ?",
+        "Comment retrouver les lignes de A qui n'ont AUCUNE correspondance "
+        "dans B, sans sous-requête (anti-join) ?",
         # null_filtering
         "Quelle est la différence entre WHERE et HAVING ?",
         "Comment éviter une division par zéro en remplaçant une valeur "
         "par NULL si elle est égale à une autre ?",
         "Comment tester si une valeur est NULL ?",
+        "Dans quel ordre logique une requête SELECT est-elle évaluée ?",
         # aggregates
         "Quelle est la différence entre COUNT(*) et COUNT(colonne) ?",
         "Comment éliminer les doublons dans un résultat ?",
@@ -494,6 +597,11 @@ flashcards_data = {
         "Comment supprimer les espaces en début et fin de chaîne ?",
         "Comment obtenir la longueur d'une chaîne de caractères ?",
         "Comment rechercher un motif (wildcard) dans une chaîne ?",
+        # crud
+        "Comment ajouter une ligne à une table ?",
+        "Comment insérer dans une table le résultat d'une requête ?",
+        "Comment modifier des lignes existantes ?",
+        "Comment supprimer des lignes ?",
     ],
     "answer": [
         # stats
@@ -512,17 +620,24 @@ flashcards_data = {
         "PARTITION BY colonne",
         # cte
         "WITH nom AS (SELECT ...) SELECT ... FROM nom",
+        "WITH a AS (...), b AS (SELECT ... FROM a) SELECT ...  -- un seul "
+        "WITH, CTE séparées par des virgules, chacune peut lire les "
+        "précédentes",
         # joins
         "INNER JOIN",
         "LEFT JOIN",
         "FULL OUTER JOIN",
         "CROSS JOIN",
         "self join  -- la même table jointe à elle-même via deux alias",
+        "A LEFT JOIN B ON ... WHERE B.cle IS NULL",
         # null_filtering
         "WHERE filtre avant le GROUP BY (lignes brutes), HAVING filtre "
         "après (sur le résultat agrégé)",
         "NULLIF(colonne, 0)",
         "IS NULL / IS NOT NULL  -- jamais '= NULL', NULL n'est égal à rien",
+        "FROM → JOIN → WHERE → GROUP BY → HAVING → SELECT → ORDER BY  -- "
+        "d'où l'impossibilité d'utiliser un alias du SELECT ou un agrégat "
+        "dans le WHERE",
         # aggregates
         "COUNT(*) compte toutes les lignes, COUNT(colonne) ignore les "
         "NULL de cette colonne",
@@ -549,6 +664,13 @@ flashcards_data = {
         "LENGTH(colonne)  -- LEN(colonne) en SQL Server",
         "colonne LIKE '%motif%'  -- % = plusieurs caractères, _ = un "
         "seul ; ILIKE (Postgres/DuckDB) pour ignorer la casse",
+        # crud
+        "INSERT INTO table (col1, col2) VALUES (v1, v2)",
+        "INSERT INTO table (col1, col2) SELECT ... FROM ...  -- pas de "
+        "VALUES",
+        "UPDATE table SET colonne = valeur WHERE ...  -- sans WHERE, "
+        "TOUTES les lignes sont modifiées",
+        "DELETE FROM table WHERE ...  -- sans WHERE, la table est vidée",
     ],
     "example": [
         # stats
@@ -587,6 +709,15 @@ flashcards_data = {
         ")\n"
         "SELECT * FROM gros_clients\n"
         "WHERE total > 100;",
+        "WITH totaux AS (\n"
+        "    SELECT client_name, SUM(amount) AS total\n"
+        "    FROM sales GROUP BY client_name\n"
+        "),\n"
+        "global AS (\n"
+        "    SELECT SUM(total) AS grand_total FROM totaux\n"
+        ")\n"
+        "SELECT client_name, total / grand_total AS part\n"
+        "FROM totaux CROSS JOIN global;",
         # joins
         "SELECT * FROM orders\n"
         "INNER JOIN customers USING (customer_id);",
@@ -599,6 +730,10 @@ flashcards_data = {
         "SELECT e.name AS employe, m.name AS manager\n"
         "FROM employees e\n"
         "JOIN employees m ON e.manager_id = m.id;",
+        "SELECT c.customer_name\n"
+        "FROM customers c\n"
+        "LEFT JOIN orders o ON c.customer_id = o.customer_id\n"
+        "WHERE o.order_id IS NULL;",
         # null_filtering
         "SELECT client_name, SUM(amount) AS total\n"
         "FROM sales\n"
@@ -607,6 +742,12 @@ flashcards_data = {
         "HAVING SUM(amount) > 100;",
         "SELECT NULLIF(bonus, 0) FROM employees;",
         "SELECT * FROM employees WHERE bonus IS NULL;",
+        "SELECT client_name, SUM(amount) AS total  -- 6. SELECT\n"
+        "FROM sales                               -- 1. FROM\n"
+        "WHERE amount > 0                         -- 3. WHERE\n"
+        "GROUP BY client_name                     -- 4. GROUP BY\n"
+        "HAVING SUM(amount) > 100                 -- 5. HAVING\n"
+        "ORDER BY total DESC;                     -- 7. ORDER BY",
         # aggregates
         "SELECT COUNT(*), COUNT(bonus) FROM employees;",
         "SELECT DISTINCT client_name FROM sales;",
@@ -627,10 +768,20 @@ flashcards_data = {
         "SELECT TRIM('  Oussama  ');",
         "SELECT LENGTH(client_name) FROM sales;",
         "SELECT * FROM sales WHERE client_name LIKE 'J%';",
+        # crud
+        "INSERT INTO products (product_id, product_name, product_price)\n"
+        "VALUES (102, 'Casque', 150);",
+        "INSERT INTO sales_archive (client_name, amount)\n"
+        "SELECT client_name, amount FROM sales WHERE amount >= 60;",
+        "UPDATE products\n"
+        "SET product_price = product_price + 50\n"
+        "WHERE product_price > 100;",
+        "DELETE FROM customers\n"
+        "WHERE customer_id = 106;",
     ],
-    "last_reviewed": ["1970-01-01"] * 35,
-    "interval_step": [0] * 35,
 }
+flashcards_data["last_reviewed"] = ["1970-01-01"] * len(flashcards_data["card_name"])
+flashcards_data["interval_step"] = [0] * len(flashcards_data["card_name"])
 flashcards_df = pd.DataFrame(flashcards_data)
 con.execute("CREATE TABLE IF NOT EXISTS flashcards AS SELECT * FROM flashcards_df")
 
@@ -641,9 +792,15 @@ con.execute("ALTER TABLE flashcards ADD COLUMN IF NOT EXISTS example VARCHAR")
 
 # Même logique que pour memory_state : on n'ajoute que les cartes absentes,
 # pour ne pas écraser la progression de révision des cartes déjà en place.
+# Colonnes listées explicitement : dans une base créée avant l'ajout de
+# "example", cette colonne est en DERNIÈRE position (ALTER TABLE), alors
+# qu'elle précède last_reviewed dans flashcards_df.
 con.execute("""
     INSERT INTO flashcards
-    SELECT n.* FROM flashcards_df n
+        (theme, card_name, question, answer, example, last_reviewed, interval_step)
+    SELECT n.theme, n.card_name, n.question, n.answer, n.example,
+        n.last_reviewed, n.interval_step
+    FROM flashcards_df n
     WHERE NOT EXISTS (
         SELECT 1 FROM flashcards m WHERE m.card_name = n.card_name
     )
