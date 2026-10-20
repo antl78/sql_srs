@@ -1,5 +1,7 @@
 import io
 import random
+from datetime import date, timedelta
+
 import pandas as pd
 import duckdb
 
@@ -26,6 +28,10 @@ data = {
         "case_when", "case_when", "case_when", "case_when",
         "grouping_sets", "grouping_sets", "grouping_sets",
         "grouping_sets", "grouping_sets",
+        # Niveau 4 : CASE WHEN dans un agrégat, dates
+        "conditional_aggregation", "conditional_aggregation",
+        "conditional_aggregation", "conditional_aggregation",
+        "dates", "dates", "dates", "dates", "dates",
     ],
     "exercise_name": [
         "beverages_and_food",
@@ -67,6 +73,15 @@ data = {
         "department_population_2021_rollup",
         "store_product_cube",
         "quantity_per_discount_code_with_total",
+        "wine_share_per_store",
+        "it_vs_other_payroll",
+        "store_product_pivot",
+        "well_paid_rate_per_department",
+        "monthly_revenue",
+        "revenue_per_weekday",
+        "clients_long_purchase_span",
+        "monthly_revenue_pivot_per_client",
+        "visits_vs_previous_week",
     ],
     "statement": [
         "Associe chaque boisson à chaque plat pour générer toutes les combinaisons "
@@ -209,6 +224,48 @@ data = {
         "libellé 'NO_CODE' pour les commandes sans code, 'TOTAL' pour la "
         "ligne de total, le code lui-même sinon. Colonnes : libellé, "
         "quantité totale.",
+        # conditional_aggregation
+        "Pour chaque magasin de store_sales, affiche le montant vendu en "
+        "vin ('wine'), le montant total, et la part du vin dans le total en "
+        "pourcentage arrondi à 2 décimales. Une seule requête GROUP BY, sans "
+        "CTE ni FILTER (pas portable). Colonnes : store_id, montant vin, "
+        "montant total, part en %.",
+        "En une seule ligne, affiche la masse salariale du département IT, "
+        "celle de tous les autres départements réunis, et la part de l'IT "
+        "dans la masse salariale totale en pourcentage arrondi à 2 "
+        "décimales. Attention à la division entière sur d'autres SGBD que "
+        "DuckDB.",
+        "Pivote store_sales : une ligne par magasin, une colonne par produit "
+        "(redbull, chips, wine, icecream) contenant le montant total vendu. "
+        "Un produit jamais vendu dans un magasin doit valoir 0, pas NULL. "
+        "Sans PIVOT (pas portable).",
+        "Pour chaque département de wages, affiche l'effectif et le "
+        "pourcentage de salariés payés au moins 70 000, arrondi à 2 "
+        "décimales (ex : 75 pour 75 %). Une seule requête, sans CTE ni "
+        "sous-requête.",
+        # dates
+        "Affiche, pour chaque mois, le nombre de ventes et le chiffre "
+        "d'affaires de sales. Le mois est une date : le 1er du mois "
+        "(ex : 2026-02-01).",
+        "Affiche le nombre de ventes et le chiffre d'affaires de sales par "
+        "jour de la semaine, identifié par son numéro EXTRACT(DOW ...) "
+        "(0 = dimanche, 6 = samedi). Colonnes : numéro du jour, nombre de "
+        "ventes, CA.",
+        "Pour chaque client de sales, affiche la date de sa première vente, "
+        "celle de sa dernière vente et le nombre de jours entre les deux. "
+        "Ne garde que les clients pour qui cet écart est d'au moins 60 "
+        "jours.",
+        "Pivote le chiffre d'affaires de sales par mois : une ligne par "
+        "client, une colonne par mois (janvier, février, mars 2026). Un mois "
+        "sans vente vaut 0. Colonnes : client_name, puis les trois mois dans "
+        "l'ordre.",
+        "Pour chaque jour de sensor_visits, affiche le nombre de visiteurs, "
+        "celui du même jour de la semaine précédente (date - 7 jours, NULL "
+        "s'il n'y a pas de relevé ce jour-là) et la différence entre les "
+        "deux. Attention : il n'y a pas de relevé le dimanche, donc ne "
+        "suppose pas qu'une semaine = un nombre fixe de lignes, travaille "
+        "sur les dates. Colonnes : visit_date, visitor_count, valeur J-7, "
+        "différence.",
     ],
     "tables": [
         ["beverages", "food_items"],
@@ -255,6 +312,17 @@ data = {
         ["department_population"],
         ["store_sales"],
         ["orders_discounts"],
+        # conditional_aggregation
+        ["store_sales"],
+        ["wages"],
+        ["store_sales"],
+        ["wages"],
+        # dates
+        ["sales"],
+        ["sales"],
+        ["sales"],
+        ["sales"],
+        ["sensor_visits"],
     ],
 }
 nb_exercises = len(data["exercise_name"])
@@ -502,12 +570,37 @@ clients = [
 ventes = [110, 49, 65, 23, 24, 3.99, 29, 48.77, 44, 10, 60, 12, 62, 19, 75] * 2
 random.shuffle(ventes)
 
+# Niveau 4 : sale_date ajoutée pour les exercices sur les dates. Générateur
+# dédié (random.Random) pour ne pas décaler les tirages ci-dessus : chaque
+# vente reçoit une date du 1er trimestre 2026 (reproductible).
+dates_rng = random.Random(2026)
 sales_data = {
     "client_name": [clients[i % len(clients)] for i in range(len(ventes))],
     "amount": ventes,
+    "sale_date": [
+        date(2026, 1, 1) + timedelta(days=dates_rng.randrange(90))
+        for _ in ventes
+    ],
 }
-sales = pd.DataFrame(sales_data)
-con.execute("CREATE TABLE IF NOT EXISTS sales AS SELECT * FROM sales")
+# Nommé sales_df (et non sales) : dans "SELECT ... FROM sales", DuckDB lit la
+# table sales si elle existe déjà, et ne regarde le DataFrame Python qu'à
+# défaut.
+sales_df = pd.DataFrame(sales_data)
+SALES_SELECT = (
+    "SELECT client_name, amount, CAST(sale_date AS DATE) AS sale_date "
+    "FROM sales_df"
+)
+con.execute(f"CREATE TABLE IF NOT EXISTS sales AS {SALES_SELECT}")
+
+# Migration d'une base créée avant le niveau 4 (sales sans sale_date) : la
+# table est recréée, ce qui est sans risque car elle ne contient aucune
+# progression (celle-ci est dans memory_state).
+sales_has_date = con.execute("""
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_name = 'sales' AND column_name = 'sale_date'
+""").fetchone()[0]
+if not sales_has_date:
+    con.execute(f"CREATE OR REPLACE TABLE sales AS {SALES_SELECT}")
 
 # ----------------------------------------
 # LEVEL 2 : SELF JOIN (SUITE), CTE, CRUD
@@ -626,6 +719,37 @@ con.execute(
 )
 
 # ----------------------------------------
+# LEVEL 4 : CASE WHEN DANS UN AGRÉGAT, DATES
+# ----------------------------------------
+# Les exercices réutilisent store_sales / wages (niveau 3) et sales (avec
+# sale_date, voir plus haut).
+
+# sensor_visits (cours : capteurs). 01 -> 23/08 = valeurs du cours, 24 ->
+# 31/08 synthétique sauf le 30 (5500, visible dans le cours). Pas de
+# relevé le dimanche : "7 jours avant" n'est donc pas "7 lignes avant".
+# Resservira au niveau 5 (window functions).
+con.execute("""
+    CREATE TABLE IF NOT EXISTS sensor_visits AS
+    SELECT CAST(visit_date AS DATE) AS visit_date, sensor_id, visitor_count
+    FROM (VALUES
+        ('2023-08-01', 'porte_a', 4200), ('2023-08-02', 'porte_a', 5300),
+        ('2023-08-03', 'porte_a', 4400), ('2023-08-04', 'porte_a', 5500),
+        ('2023-08-05', 'porte_a', 6000), ('2023-08-07', 'porte_a', 4200),
+        ('2023-08-08', 'porte_a', 4700), ('2023-08-09', 'porte_a', 5300),
+        ('2023-08-10', 'porte_a', 4400), ('2023-08-11', 'porte_a', 5500),
+        ('2023-08-12', 'porte_a', 6000), ('2023-08-14', 'porte_a', 3900),
+        ('2023-08-15', 'porte_a', 4200), ('2023-08-16', 'porte_a', 4700),
+        ('2023-08-17', 'porte_a', 3600), ('2023-08-18', 'porte_a', 5000),
+        ('2023-08-19', 'porte_a', 5500), ('2023-08-21', 'porte_a', 4300),
+        ('2023-08-22', 'porte_a', 4900), ('2023-08-23', 'porte_a', 5500),
+        ('2023-08-24', 'porte_a', 4600), ('2023-08-25', 'porte_a', 5200),
+        ('2023-08-26', 'porte_a', 5800), ('2023-08-28', 'porte_a', 4100),
+        ('2023-08-29', 'porte_a', 4500), ('2023-08-30', 'porte_a', 5500),
+        ('2023-08-31', 'porte_a', 4800)
+    ) AS t(visit_date, sensor_id, visitor_count)
+""")
+
+# ----------------------------------------
 # FLASHCARDS (memocards) - fonctions SQL a retenir
 # ----------------------------------------
 # Contrairement aux exercices ci-dessus (requête à écrire, comparée à une
@@ -652,6 +776,8 @@ flashcards_data = {
         + ["crud"] * 4
         + ["case_when"] * 2
         + ["grouping_sets"] * 4
+        + ["conditional_aggregation"] * 4
+        + ["dates"] * 2
     ),
     "card_name": [
         # stats
@@ -715,6 +841,14 @@ flashcards_data = {
         "rollup",
         "cube",
         "grouping_function",
+        # conditional_aggregation
+        "sum_case_when",
+        "filter_clause",
+        "conditional_rate",
+        "integer_division",
+        # dates (suite)
+        "extract_dow",
+        "same_day_previous_week",
     ],
     "question": [
         # stats
@@ -805,6 +939,20 @@ flashcards_data = {
         "de colonnes (axes indépendants) ?",
         "Comment distinguer, dans un ROLLUP / GROUPING SETS, un NULL de "
         "sous-total d'un vrai NULL présent dans les données ?",
+        # conditional_aggregation
+        "Comment sommer seulement les lignes qui vérifient une condition, "
+        "dans un GROUP BY (ex : pivot manuel, une colonne par produit) ?",
+        "Quelle syntaxe plus courte (mais non portable) remplace "
+        "SUM(CASE WHEN cond THEN x END) ?",
+        "Comment calculer le pourcentage de lignes qui vérifient une "
+        "condition (taux de conversion, part de clients...) ?",
+        "Pourquoi SUM(a) / SUM(b) peut renvoyer 0 sur Postgres ou SQL "
+        "Server, et comment l'éviter ?",
+        # dates (suite)
+        "Comment obtenir le jour de la semaine d'une date, et quelle est "
+        "la convention de numérotation ?",
+        "Comment comparer chaque jour au même jour de la semaine précédente "
+        "quand il manque des dates (pas de relevé certains jours) ?",
     ],
     "answer": [
         # stats
@@ -891,6 +1039,21 @@ flashcards_data = {
         "2^n groupements",
         "GROUPING(colonne)  -- 1 si la colonne est agrégée (NULL de "
         "sous-total), 0 sinon",
+        # conditional_aggregation
+        "SUM(CASE WHEN condition THEN colonne ELSE 0 END)  -- ELSE 0 pour "
+        "obtenir 0 au lieu de NULL quand aucune ligne ne correspond",
+        "SUM(colonne) FILTER (WHERE condition)  -- Postgres/DuckDB "
+        "seulement ; en entretien, préférer CASE WHEN",
+        "AVG(CASE WHEN condition THEN 1.0 ELSE 0 END)  -- le ELSE 0 est "
+        "indispensable : sans lui, AVG ignore les NULL et renvoie 1",
+        "Division de deux entiers = division entière sur Postgres / SQL "
+        "Server : écrire SUM(a) * 1.0 / SUM(b) ou CAST(... AS DECIMAL). "
+        "DuckDB fait déjà une division décimale",
+        "EXTRACT(DOW FROM colonne)  -- 0 = dimanche … 6 = samedi "
+        "(Postgres/DuckDB) ; EXTRACT(ISODOW ...) : 1 = lundi … 7 = dimanche",
+        "Self join sur la date : LEFT JOIN t prev ON prev.d = cur.d - "
+        "INTERVAL '7 days'  -- LAG(x, 7) suppose une ligne par jour, sans "
+        "trou",
     ],
     "example": [
         # stats
@@ -1031,6 +1194,33 @@ flashcards_data = {
         "    SUM(quantity)\n"
         "FROM orders_discounts\n"
         "GROUP BY ROLLUP (discount_code);",
+        # conditional_aggregation
+        "SELECT store_id,\n"
+        "    SUM(CASE WHEN product_name = 'chips' THEN amount ELSE 0 END) AS chips,\n"
+        "    SUM(CASE WHEN product_name = 'wine' THEN amount ELSE 0 END) AS wine\n"
+        "FROM store_sales\n"
+        "GROUP BY store_id;",
+        "SELECT department,\n"
+        "    COUNT(*) FILTER (WHERE wage >= 80000) AS high_wages\n"
+        "FROM wages\n"
+        "GROUP BY department;",
+        "SELECT department,\n"
+        "    AVG(CASE WHEN wage >= 80000 THEN 1.0 ELSE 0 END) AS high_wage_rate\n"
+        "FROM wages\n"
+        "GROUP BY department;",
+        "SELECT store_id,\n"
+        "    SUM(CASE WHEN product_name = 'wine' THEN amount END) * 1.0\n"
+        "        / SUM(amount) AS wine_share\n"
+        "FROM store_sales\n"
+        "GROUP BY store_id;",
+        "SELECT EXTRACT(DOW FROM sale_date) AS weekday, COUNT(*)\n"
+        "FROM sales\n"
+        "GROUP BY EXTRACT(DOW FROM sale_date);",
+        "SELECT cur.visit_date, cur.visitor_count,\n"
+        "    prev.visitor_count AS previous_week\n"
+        "FROM sensor_visits cur\n"
+        "LEFT JOIN sensor_visits prev\n"
+        "    ON prev.visit_date = cur.visit_date - INTERVAL '7 days';",
     ],
 }
 flashcards_data["last_reviewed"] = ["1970-01-01"] * len(flashcards_data["card_name"])
